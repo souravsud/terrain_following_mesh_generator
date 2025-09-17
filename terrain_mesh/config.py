@@ -56,6 +56,7 @@ class MeshConfig:
     num_cells_z: int = 20
     expansion_ratio_z: float = 20.0
     patch_types: Optional[Dict[str, str]] = None
+    extract_inlet_face_info: bool = True
     
     def __post_init__(self):
         if self.patch_types is None:

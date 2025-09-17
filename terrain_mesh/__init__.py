@@ -2,7 +2,7 @@
 Terrain-to-CFD Mesh Generation Package
 """
 
-from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig, load_config, save_config_template
+from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig, load_config
 from .pipeline import TerrainMeshPipeline
 
 __version__ = "1.0.0"

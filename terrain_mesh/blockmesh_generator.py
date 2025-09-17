@@ -9,24 +9,28 @@ from .config import MeshConfig
 class BlockMeshGenerator:
     """Generate OpenFOAM blockMeshDict from structured grid"""
 
-    def generate_blockMeshDict(self, config: MeshConfig, input_vtk_file: str = "terrain_structured.vtk", output_dict_file: str = "system/blockMeshDict"):
+    def generate_blockMeshDict(self, config: MeshConfig, input_vtk_file: str = "terrain_structured.vtk", output_dict_file: str = "system/blockMeshDict", inlet_face_file: str ="0/include/inletFaceInfo.txt"):
         """Wrapper method that uses MeshConfig"""
         return self._blockMeshDictCreator(
             input_vtk_file=input_vtk_file,
             output_dict_file=output_dict_file,
+            inlet_face_file = inlet_face_file,
             domain_height=config.domain_height,
             num_cells_z=config.num_cells_z,
             expansion_ratio_R=config.expansion_ratio_z,  # Note: your config uses expansion_ratio_z
-            patch_types=config.patch_types
+            patch_types=config.patch_types,
+            extract_inlet_face_info = config.extract_inlet_face_info
         )
 
     def _blockMeshDictCreator(self,
             input_vtk_file="terrain_structured.vtk",
             output_dict_file="system/blockMeshDict",
+            inlet_face_file="0/include/inletFaceInfo.txt",
             domain_height=4000.0,
             num_cells_z=20,
             expansion_ratio_R=20.0,
-            patch_types=None
+            patch_types=None,
+            extract_inlet_face_info = True
         ):
         """
         Generates an OpenFOAM blockMeshDict for terrain-following mesh, skipping NaN regions.
@@ -129,12 +133,16 @@ class BlockMeshGenerator:
             
             # Detect boundary patches by direction
             boundary_patches = self.detect_boundary_patches(block_positions, nx, ny)
-            
-            # Create output directory
-            output_dir = os.path.dirname(output_dict_file)
-            if output_dir and not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-                print(f"Created directory: {output_dir}")
+            print("inlet file")
+            # Detect boundary patches by direction
+            boundary_patches = self.detect_boundary_patches(block_positions, nx, ny)
+            if extract_inlet_face_info:
+                inlet_face_info = self.save_inlet_face_info(
+                                            block_positions,
+                                            boundary_patches,  # You must pass this argument
+                                            points,
+                                            inlet_face_file
+                                        )
             
             # Write blockMeshDict
             with open(output_dict_file, 'w') as f:
@@ -258,3 +266,53 @@ class BlockMeshGenerator:
                 boundary_patches['sides'].append(f"({v1} {v2} {v6} {v5})")
         
         return boundary_patches
+
+
+    def save_inlet_face_info(self, block_positions, boundary_patches, points, output_file):
+        """
+        Saves inlet face information to a file, creating the directory if it doesn't exist.
+
+        Args:
+            block_positions (dict): A dictionary mapping block indices (i, j) to vertex indices.
+            boundary_patches (dict): A dictionary for boundary patches (passed as a placeholder).
+            points (list or array): A data structure containing the point coordinates.
+            output_file (str): The full path to the output file (e.g., '0/include/inletFaceInfo.txt').
+        """
+        print("Saving inlet face information...")
+
+        # Create the directory for the output file if it doesn't exist.
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        inlet_faces = []
+        block_set = set(block_positions.keys())
+        
+        for (i, j), (v0, v1, v2, v3, v4, v5, v6, v7) in block_positions.items():
+            # Check if this block has inlet face
+            if (i, j-1) not in block_set:
+                # This block contributes to inlet
+                # Get ground coordinates from vertex indices
+                x_ground = points[j, i, 0]  # v0 x-coordinate
+                y_ground = points[j, i, 1]  # v0 y-coordinate
+                z_ground = points[j, i, 2]  # v0 z-coordinate
+                
+                inlet_faces.append({
+                    'block_i': i,
+                    'block_j': j,
+                    'x_ground': x_ground,
+                    'y_ground': y_ground,
+                    'z_ground': z_ground,
+                    'vertices': (v0, v1, v2, v3, v4, v5, v6, v7)
+                })
+        
+        # Save to file
+        with open(output_file, 'w') as f:
+            f.write("# Inlet face information\n")
+            f.write("# Format: block_i, block_j, x_ground, y_ground, z_ground\n")
+            f.write(f"# Total inlet blocks: {len(inlet_faces)}\n")
+            
+            for face in inlet_faces:
+                f.write(f"{face['block_i']}, {face['block_j']}, ")
+                f.write(f"{face['x_ground']:.6f}, {face['y_ground']:.6f}, {face['z_ground']:.6f}\n")
+        
+        print(f"Saved inlet face info: {len(inlet_faces)} blocks to {output_file}")
+        return inlet_faces
