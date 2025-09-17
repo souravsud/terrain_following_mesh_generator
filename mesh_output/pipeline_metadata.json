@@ -1,0 +1,145 @@
+{
+  "pipeline_info": {
+    "timestamp": "2025-09-17T10:54:28.131845",
+    "version": "1.0",
+    "pipeline_class": "TerrainMeshPipeline"
+  },
+  "input_files": {
+    "original_dem": "/Users/ssudhakaran/Documents/CFD_Dataset/GenerateInputs/Data/downloads/terrain_0001_glo_30_N39_711_W007_735_50km.tif",
+    "utm_dem": "/Users/ssudhakaran/Documents/CFD_Dataset/GenerateInputs/Data/downloads/terrain_0001_glo_30_N39_711_W007_735_50km.tif"
+  },
+  "output_files": {
+    "output_directory": "mesh_output",
+    "vtk_mesh": "mesh_output/terrain_structured.vtk",
+    "blockmesh_dict": "mesh_output/system/blockMeshDict",
+    "metadata_file": "mesh_output/pipeline_metadata.json"
+  },
+  "terrain_config": {
+    "center_lat": 39.71121111,
+    "center_lon": -7.73483333,
+    "crop_size_km": 31,
+    "rotation_deg": 45,
+    "smoothing_sigma": 2.0,
+    "center_coordinates": false
+  },
+  "grid_config": {
+    "nx": 337,
+    "ny": 337,
+    "x_grading": [
+      [
+        0.3,
+        0.2,
+        0.05
+      ],
+      [
+        0.4,
+        0.6,
+        1.0
+      ],
+      [
+        0.3,
+        0.2,
+        20.0
+      ]
+    ],
+    "y_grading": [
+      [
+        0.3,
+        0.2,
+        0.05
+      ],
+      [
+        0.4,
+        0.6,
+        1.0
+      ],
+      [
+        0.3,
+        0.2,
+        20.0
+      ]
+    ]
+  },
+  "mesh_config": {
+    "domain_height": 4000.0,
+    "num_cells_z": 50,
+    "expansion_ratio_z": 400.0,
+    "patch_types": {
+      "ground": "wall",
+      "sky": "patch",
+      "inlet": "patch",
+      "outlet": "patch",
+      "sides": "patch"
+    }
+  },
+  "boundary_config": {
+    "aoi_fraction": 0.4,
+    "boundary_mode": "directional",
+    "flat_boundary_thickness_fraction": 0.08,
+    "enabled_boundaries": [
+      "east",
+      "west"
+    ],
+    "smoothing_method": "mean",
+    "kernel_progression": "exponential",
+    "base_kernel_size": 5,
+    "max_kernel_size": null,
+    "progression_rate": 10,
+    "boundary_flatness_mode": "blend_target",
+    "uniform_elevation": null
+  },
+  "processing_results": {
+    "pixel_resolution": [
+      26.640339697933353,
+      26.640339697933353
+    ],
+    "coordinate_reference_system": "EPSG:32629",
+    "spatial_transform": {
+      "geotransform": [
+        26.640339697933353,
+        0.0,
+        586511.9938662233,
+        0.0,
+        -26.640339697933353,
+        4418406.466386914,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    "elevation_statistics": {
+      "original": {
+        "shape": [
+          1646,
+          1646
+        ],
+        "min_elevation": NaN,
+        "max_elevation": NaN,
+        "mean_elevation": NaN,
+        "std_elevation": NaN
+      },
+      "treated": {
+        "shape": [
+          1646,
+          1646
+        ],
+        "min_elevation": NaN,
+        "max_elevation": NaN,
+        "mean_elevation": NaN,
+        "std_elevation": NaN
+      }
+    },
+    "grid_statistics": {
+      "number_of_points": 113569,
+      "number_of_cells": 112896,
+      "bounds": [
+        586551.9543757697,
+        630348.6728391731,
+        4374569.787413964,
+        4418366.505877368,
+        71.5007553100586,
+        714.0203857421875
+      ]
+    }
+  }
+}
