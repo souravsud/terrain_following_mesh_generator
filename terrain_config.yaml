@@ -3,30 +3,33 @@
 terrain:
   center_lat: 39.71121111
   center_lon: -7.73483333
-  crop_size_km: 31
+  crop_size_km: 25
   rotation_deg: 45
   smoothing_sigma: 2.0
   center_coordinates: false
 
 grid:
-  nx: 337
-  ny: 337
+  nx: 384
+  ny: 384
   x_grading:
-    - [0.3, 0.2, 0.05]
-    - [0.4, 0.6, 1.0] 
-    - [0.3, 0.2, 20.0]
+    - [0.35, 0.12, 0.033333]
+    - [0.30, 0.76, 1.0]
+    - [0.35, 0.12, 30.0]
   y_grading:
-    - [0.3, 0.2, 0.05]
-    - [0.4, 0.6, 1.0]
-    - [0.3, 0.2, 20.0]
+    - [0.35, 0.12, 0.033333]
+    - [0.30, 0.76, 1.0]
+    - [0.35, 0.12, 30.0]
 
 mesh:
-  domain_height: 4000.0
-  num_cells_z: 50
-  expansion_ratio_z: 100.0
+  domain_height: 3000.0
+  first_cell_height: 1.0
+  total_z_cells: 100  
+  z_grading:
+    - [0.04, 0.50, 1.4565]     # Uniform layer: 10% height, 40% cells
+    - [0.96, 0.50, 85.0]    # Expanding layer: 90% height, 60% cells, ratio 50
 
 boundary:
-  aoi_fraction: 0.4
+  aoi_fraction: 0.3
   boundary_mode: directional
   flat_boundary_thickness_fraction: 0.08
   enabled_boundaries: [east, west]
