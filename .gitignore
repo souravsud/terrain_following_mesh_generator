@@ -1,3 +1,4 @@
 backup/
 *.vtk
 mesh_output/
+mesh_visualizer.py
