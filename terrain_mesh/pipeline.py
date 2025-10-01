@@ -10,7 +10,6 @@ from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, Visua
 from .terrain_processor import TerrainProcessor
 from .boundary_treatment import BoundaryTreatment
 from .grid_generator import StructuredGridGenerator
-from .mesh_quality import MeshQualityAnalyzer
 from .visualizer import TerrainVisualizer
 from .blockmesh_generator import BlockMeshGenerator
 
@@ -21,7 +20,6 @@ class TerrainMeshPipeline:
         self.processor = TerrainProcessor()
         self.boundary_treatment = BoundaryTreatment()
         self.generator = StructuredGridGenerator()
-        self.quality_analyzer = MeshQualityAnalyzer()
         self.visualizer = TerrainVisualizer()
         self.blockmesh_generator = BlockMeshGenerator()
         self.metadata = {}
