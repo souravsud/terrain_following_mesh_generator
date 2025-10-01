@@ -1,0 +1,17 @@
+name: tfmesh
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - matplotlib
+  - pyvista
+  - rasterio
+  - pyproj
+  - pyyaml
+  - scikit-image
+  - pip
+  - pip:
+      - typer

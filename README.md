@@ -21,3 +21,28 @@ It takes an input terrain surface and automatically produces a `blockMeshDict` t
 4. Vertical layers are **graded** based on user-specified z-grading.  
 5. Final mesh specification is exported as a `blockMeshDict`.  
 6. Run OpenFOAM’s `blockMesh` to generate the mesh.  
+
+## Installation
+
+We recommend using a [Conda](https://docs.conda.io/projects/conda/en/latest/index.html) environment to manage dependencies.
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/souravsud/terrain_following_mesh_generator.git
+cd terrain_following_mesh_generator
+
+```
+
+### 2. Create and activate conda environment
+```bash
+conda env create -f environment.yml
+conda activate tfmesh
+```
+
+## Usage
+
+Add the path to the DEM file in the run.py (dem_path) and the output directory-output_dir (preferebly the openFOAM case directory so that it will create the Dictionary file in the correct location). Setup all the required settings in the config.yaml file and then run the python code.
+
+```bash
+python run.py
+```
