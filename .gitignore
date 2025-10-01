@@ -1,3 +1,4 @@
 backup/
 *.vtk
 mesh_output/
+**/__pycache__/
