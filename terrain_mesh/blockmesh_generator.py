@@ -149,7 +149,7 @@ class BlockMeshGenerator:
 
             # Detect boundary patches by direction
             boundary_patches = self.detect_boundary_patches(block_positions, nx, ny)
-            print("inlet file")
+
             # Detect boundary patches by direction
             boundary_patches = self.detect_boundary_patches(block_positions, nx, ny)
             if extract_inlet_face_info:
@@ -564,6 +564,9 @@ class BlockMeshGenerator:
         Returns:
             str: OpenFOAM grading specification (e.g., "simpleGrading (1 1 20)" or multiGrading spec)
         """
+        if z_grading is None or len(z_grading) == 0:
+            # Uniform grading
+            return "simpleGrading (1 1 1)"
 
         if len(z_grading) == 1:
             # Single region - calculate expansion ratio from blockMesh spacing

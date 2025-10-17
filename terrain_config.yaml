@@ -1,5 +1,3 @@
-# Terrain Mesh Configuration
-
 terrain:
   center_lat: 39.71121111
   center_lon: -7.73483333
@@ -7,26 +5,32 @@ terrain:
   rotation_deg: 45
   smoothing_sigma: 0
   center_coordinates: false
-
+  
 grid:
   nx: 384
   ny: 384
   x_grading:
-    - [0.35, 0.12, 0.05]
+    - [0.35, 0.12, 0.05]   # [length_fraction, cell_fraction, expansion_ratio]
     - [0.30, 0.76, 1.0]
     - [0.35, 0.12, 20.0]
   y_grading:
     - [0.35, 0.12, 0.05]
     - [0.30, 0.76, 1.0]
     - [0.35, 0.12, 20.0]
-
+    
 mesh:
   domain_height: 3000.0
   total_z_cells: 60
   z_grading:
-    - [0.033, 0.50, 1.0]   
-    - [0.967, 0.50, 100.0]
-
+    - [0.033, 0.50, 1.0]   # Near ground refinement
+    - [0.967, 0.50, 100.0] # Expansion to domain top
+  patch_types:
+    ground: wall
+    sky: patch
+    inlet: patch
+    outlet: patch
+    sides: patch
+    
 boundary:
   aoi_fraction: 0.3
   boundary_mode: directional
@@ -37,3 +41,10 @@ boundary:
   base_kernel_size: 5
   progression_rate: 10
   boundary_flatness_mode: blend_target
+  
+visualization:
+  create_plots: true
+  show_grid_lines: true
+  save_high_res: true
+  plot_format: png
+  dpi: 150
