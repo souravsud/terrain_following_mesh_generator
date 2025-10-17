@@ -9,8 +9,8 @@ terrain:
   center_coordinates: false
 
 grid:
-  nx: 384
-  ny: 384
+  nx: 350
+  ny: 350
   x_grading:
     - [0.35, 0.12, 0.05]
     - [0.30, 0.76, 1.0]
@@ -22,10 +22,11 @@ grid:
 
 mesh:
   domain_height: 3000.0
-  total_z_cells: 60
+  first_cell_height: 1.0
+  total_z_cells: 60  
   z_grading:
-    - [0.033, 0.50, 1.0]   
-    - [0.967, 0.50, 100.0]
+    - [0.04, 0.667, 1.5]   
+    - [0.96, 0.333, 85.0]
 
 boundary:
   aoi_fraction: 0.3

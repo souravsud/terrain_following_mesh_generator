@@ -7,8 +7,8 @@ def main():
     # Run pipeline with loaded configs
     pipeline = tm.TerrainMeshPipeline()
     results = pipeline.run(
-        dem_path="/home/ssudhakaran/sourav_files/6_OpenFOAM/backup/terrain_0001_glo_30_N39_711_W007_735_50km.tif",
-        output_dir="/home/ssudhakaran/sourav_files/6_OpenFOAM/meshStructured",
+        dem_path="/Users/ssudhakaran/Documents/Simulations/2025/perdigao_validation_ventos_openFoam/ventosData/topo_square.dat",
+        output_dir="/Users/ssudhakaran/Documents/Simulations/API/openFoam/meshRefine",
         **configs  # Unpacks all config objects
     )
     
