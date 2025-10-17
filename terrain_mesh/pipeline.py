@@ -181,8 +181,8 @@ class TerrainMeshPipeline:
             
             "mesh_config": {
                 "domain_height": kwargs['mesh_config'].domain_height,
-                "num_cells_z": kwargs['mesh_config'].num_cells_z,
-                "expansion_ratio_z": kwargs['mesh_config'].expansion_ratio_z,
+                "total_z_cells": kwargs['mesh_config'].total_z_cells,
+                "z_grading": kwargs['mesh_config'].z_grading,
                 "patch_types": kwargs['mesh_config'].patch_types
             } if kwargs['mesh_config'] else None,
             
