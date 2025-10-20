@@ -54,15 +54,10 @@ class MeshConfig:
     """Configuration for OpenFOAM mesh generation"""
     domain_height: float = 4000.0
     
-    # Z-direction configuration - choose one approach:
-    # Option 1: Legacy single expansion (backward compatibility)
-    #num_cells_z: Optional[int] = None
-    #expansion_ratio_z: Optional[float] = None
-    
-    # Option 2: New grading approach with optional first cell
-    first_cell_height: Optional[float] = None
+    # Z-direction configuration
     z_grading: Optional[List[Tuple[float, float, float]]] = None
     total_z_cells: Optional[int] = None
+    terrain_normal_first_layer: bool = False
     
     patch_types: Optional[Dict[str, str]] = None
     extract_inlet_face_info: bool = True
@@ -77,26 +72,10 @@ class MeshConfig:
                 'sides': 'patch'
             }
         
-        # Validate z-direction configuration
-        #legacy_specified = self.num_cells_z is not None and self.expansion_ratio_z is not None
-        new_specified = self.z_grading is not None and self.total_z_cells is not None
-        
-        #if not (legacy_specified or new_specified):
-        #    raise ValueError("Must specify either (num_cells_z + expansion_ratio_z) or (z_grading + total_z_cells)")
-        
-        #if legacy_specified and new_specified:
-        #    raise ValueError("Cannot specify both legacy (num_cells_z, expansion_ratio_z) and new (z_grading, total_z_cells) parameters")
-        
         # Validate z_grading if specified
         if self.z_grading:
             self._validate_z_grading()
         
-        # Validate first_cell_height
-        if self.first_cell_height is not None:
-            if self.first_cell_height <= 0:
-                raise ValueError("first_cell_height must be positive")
-            if self.first_cell_height >= self.domain_height:
-                raise ValueError("first_cell_height must be less than domain_height")
     
     def _validate_z_grading(self):
         """Validate z-direction grading specification"""
@@ -107,17 +86,6 @@ class MeshConfig:
             raise ValueError(f"z_grading length fractions must sum to 1.0, got {length_sum}")
         if abs(cell_sum - 1.0) > 1e-6:
             raise ValueError(f"z_grading cell fractions must sum to 1.0, got {cell_sum}")
-    
-    #def is_using_legacy_z_config(self) -> bool:
-    #    """Check if using legacy z-direction configuration"""
-    #    return self.num_cells_z is not None and self.expansion_ratio_z is not None
-    
-    def get_effective_z_cells(self) -> int:
-        """Get total number of cells in z-direction"""
-        if self.is_using_legacy_z_config():
-            return self.num_cells_z
-        else:
-            return self.total_z_cells
 
 @dataclass
 class VisualizationConfig:
