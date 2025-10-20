@@ -268,7 +268,7 @@ class BlockMeshGenerator:
                     # Upper layer blocks (with expansion ratio)
                     for v0, v1, v2, v3, v4, v5, v6, v7, nz in valid_blocks_layer2plus:
                         f.write(f"    hex ({v0} {v1} {v2} {v3} {v4} {v5} {v6} {v7}) ")
-                        f.write(f"(1 1 {nz}) simpleGrading ({z_grading_spec})\n")
+                        f.write(f"(1 1 {nz}) {z_grading_spec}\n")
                 else:
                     for v0, v1, v2, v3, v4, v5, v6, v7, nz in valid_blocks_layer1:
                         f.write(f"    hex ({v0} {v1} {v2} {v3} {v4} {v5} {v6} {v7}) ")
