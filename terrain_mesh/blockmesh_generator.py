@@ -67,9 +67,8 @@ class BlockMeshGenerator:
 
         # Calculate z-direction grading specification
         z_grading_spec,first_cell_height  = self._calculate_z_grading_spec(
-            domain_height, z_grading, total_z_cells
+            domain_height, z_grading, total_z_cells,terrain_normal_first_layer
         )
-        print(f"Z-grading spec: {z_grading_spec}")
 
         try:
             # Read VTK file
@@ -263,7 +262,7 @@ class BlockMeshGenerator:
                     # First layer blocks (uniform, 1 cell)
                     for v0, v1, v2, v3, v4, v5, v6, v7, nz in valid_blocks_layer1:
                         f.write(f"    hex ({v0} {v1} {v2} {v3} {v4} {v5} {v6} {v7}) ")
-                        f.write(f"(1 1 {nz}) simpleGrading (1 1 1)\n")
+                        f.write(f"(1 1 1) simpleGrading (1 1 1)\n")
                     
                     # Upper layer blocks (with expansion ratio)
                     for v0, v1, v2, v3, v4, v5, v6, v7, nz in valid_blocks_layer2plus:
@@ -719,6 +718,7 @@ class BlockMeshGenerator:
         domain_height: float,
         z_grading: List[Tuple[float, float, float]],
         total_z_cells: int,
+        terrain_normal_first_layer: bool,
     ) -> str:
         """
         Calculate the z-direction grading specification string for OpenFOAM blockMeshDict.
@@ -731,20 +731,42 @@ class BlockMeshGenerator:
         Returns:
             str: OpenFOAM grading specification (e.g., "simpleGrading (1 1 20)" or multiGrading spec)
         """
-
+        first_cell_size = 0
+        if terrain_normal_first_layer:
+            # Only need first 3 points for cell size calculation
+            z_coords = self.create_blockMesh_spacing(total_z_cells, z_grading)
+            first_cell_size = (z_coords[1] - z_coords[0]) * domain_height
+            second_cell_size = (z_coords[2] - z_coords[1]) * domain_height
+            third_cell_size = (z_coords[3] - z_coords[2]) * domain_height
+            print(f"First cell size: {first_cell_size}, Second cell size: {second_cell_size}, Third cell size: {third_cell_size}")
+            cell_ratio = first_cell_size / second_cell_size
+        else:
+            z_coords = self.create_blockMesh_spacing(total_z_cells + 1, z_grading)
+            
         if len(z_grading) == 1:
             # Single region - calculate expansion ratio from blockMesh spacing
-            z_coords = self.create_blockMesh_spacing(total_z_cells + 1, z_grading)
-            #expansion_ratio = self._calculate_expansion_ratio_from_coords(z_coords)
-            expansion_ratio = z_grading[2]
-            first_cell_size = z_coords[1] - z_coords[0]
+            expansion_ratio = z_grading[0][2]
+            if terrain_normal_first_layer:
+                expansion_ratio = cell_ratio*expansion_ratio
+                
             return f"simpleGrading (1 1 {expansion_ratio})", first_cell_size
+
         else:
-            # Multiple regions - use multiGrading
             grading_parts = []
-            z_coords = self.create_blockMesh_spacing(total_z_cells + 1, z_grading)
-            first_cell_size = z_coords[1] - z_coords[0]
+            first_region = True
             for length_frac, cell_frac, expansion_ratio in z_grading:
+                if terrain_normal_first_layer:
+                    region_height = length_frac * domain_height
+                    region_cell_count = cell_frac * total_z_cells
+                    if first_region:
+                        length_frac = (region_height - first_cell_size)/(domain_height - first_cell_size)
+                        cell_frac = (region_cell_count - 1)/ (total_z_cells -1)
+                        expansion_ratio = expansion_ratio * cell_ratio
+                        first_region = False
+                    else:
+                        length_frac = (region_height)/(domain_height - first_cell_size)
+                        cell_frac = (region_cell_count)/ (total_z_cells -1)
+                        
                 grading_parts.append(f"({length_frac} {cell_frac} {expansion_ratio})")
             grading_str = " ".join(grading_parts)
             return f"multiGrading (1 1 ({grading_str}))", first_cell_size
