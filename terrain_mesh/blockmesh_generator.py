@@ -472,18 +472,15 @@ class BlockMeshGenerator:
         output_file,
         domain_height,
         mesh_config,
+        roughness_data=None,
+        roughness_transform=None,
+        default_z0=0.1
     ):
         """
-        Saves inlet face information to a file with mesh parameters, creating the directory if it doesn't exist.
-
-        Args:
-            block_positions (dict): A dictionary mapping block indices (i, j) to vertex indices.
-            boundary_patches (dict): A dictionary for boundary patches (passed as a placeholder).
-            points (list or array): A data structure containing the point coordinates.
-            output_file (str): The full path to the output file (e.g., '0/include/inletFaceInfo.txt').
-            domain_height (float): Total domain height
-            mesh_config: MeshConfig object with z-direction parameters
+        Saves inlet face information to a file with mesh parameters AND z0 values.
         """
+        from scipy.interpolate import RegularGridInterpolator
+        
         print("Saving inlet face information...")
 
         # Create the directory for the output file if it doesn't exist.
@@ -491,56 +488,92 @@ class BlockMeshGenerator:
 
         inlet_faces = []
         block_set = set(block_positions.keys())
+        
+        # Prepare z0 interpolator if roughness data provided
+        z0_interpolator = None
+        if roughness_data is not None and roughness_transform is not None:
+            print("Preparing z0 interpolation for inlet faces...")
+            nrows, ncols = roughness_data.shape
+            x_min = roughness_transform.c
+            y_max = roughness_transform.f
+            x_res = roughness_transform.a
+            y_res = -roughness_transform.e
+            
+            x_coords = np.arange(ncols) * x_res + x_min
+            y_coords = np.arange(nrows) * (-y_res) + y_max
+            
+            # Fill NaN with nearest neighbor
+            roughness_filled = roughness_data.copy()
+            if np.any(np.isnan(roughness_filled)):
+                from scipy.ndimage import distance_transform_edt
+                invalid_mask = np.isnan(roughness_filled)
+                indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
+                roughness_filled[invalid_mask] = roughness_data[tuple(indices[:, invalid_mask])]
+            
+            z0_interpolator = RegularGridInterpolator(
+                (y_coords, x_coords),
+                roughness_filled,
+                method='linear',
+                bounds_error=False,
+                fill_value=default_z0
+            )
 
+        # Collect inlet faces
         if mesh_config.terrain_normal_first_layer:
             for (i, j), (v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11) in block_positions.items():
-                # Check if this block has inlet face
                 if (i, j - 1) not in block_set:
-                    # This block contributes to inlet
-                    # Get ground coordinates from vertex indices
-                    x_ground = points[j, i, 0]  # v0 x-coordinate
-                    y_ground = points[j, i, 1]  # v0 y-coordinate
-                    z_ground = points[j, i, 2]  # v0 z-coordinate
-
-                    inlet_faces.append(
-                        {
-                            "block_i": i,
-                            "block_j": j,
-                            "x_ground": x_ground,
-                            "y_ground": y_ground,
-                            "z_ground": z_ground,
-                            "vertices": (v0, v1, v2, v3, v8, v9, v10, v11),
-                        }
-                    )
+                    x_ground = points[j, i, 0]
+                    y_ground = points[j, i, 1]
+                    z_ground = points[j, i, 2]
+                    
+                    # Interpolate z0 at this location
+                    if z0_interpolator:
+                        z0_val = float(z0_interpolator([y_ground, x_ground])[0])
+                    else:
+                        z0_val = default_z0
+                    
+                    inlet_faces.append({
+                        "block_i": i,
+                        "block_j": j,
+                        "x_ground": x_ground,
+                        "y_ground": y_ground,
+                        "z_ground": z_ground,
+                        "z0": z0_val,
+                        "vertices": (v0, v1, v2, v3, v8, v9, v10, v11),
+                    })
         else:
             for (i, j), (v0, v1, v2, v3, v4, v5, v6, v7) in block_positions.items():
-                # Check if this block has inlet face
                 if (i, j - 1) not in block_set:
-                    # This block contributes to inlet
-                    # Get ground coordinates from vertex indices
-                    x_ground = points[j, i, 0]  # v0 x-coordinate
-                    y_ground = points[j, i, 1]  # v0 y-coordinate
-                    z_ground = points[j, i, 2]  # v0 z-coordinate
+                    x_ground = points[j, i, 0]
+                    y_ground = points[j, i, 1]
+                    z_ground = points[j, i, 2]
+                    
+                    # Interpolate z0 at this location
+                    if z0_interpolator:
+                        z0_val = float(z0_interpolator([y_ground, x_ground])[0])
+                    else:
+                        z0_val = default_z0
+                    
+                    inlet_faces.append({
+                        "block_i": i,
+                        "block_j": j,
+                        "x_ground": x_ground,
+                        "y_ground": y_ground,
+                        "z_ground": z_ground,
+                        "z0": z0_val,
+                        "vertices": (v0, v1, v2, v3, v4, v5, v6, v7),
+                    })
 
-                    inlet_faces.append(
-                        {
-                            "block_i": i,
-                            "block_j": j,
-                            "x_ground": x_ground,
-                            "y_ground": y_ground,
-                            "z_ground": z_ground,
-                            "vertices": (v0, v1, v2, v3, v4, v5, v6, v7),
-                        }
-                    )
+        # Calculate statistics
+        avg_inlet_height = sum(face["z_ground"] for face in inlet_faces) / len(inlet_faces)
+        if z0_interpolator:
+            z0_values = [face["z0"] for face in inlet_faces]
+            z0_stats = f"min={min(z0_values):.4f}, max={max(z0_values):.4f}, mean={np.mean(z0_values):.4f}"
+            print(f"Inlet z0 statistics: {z0_stats}")
 
-        # Calculate average inlet height for reference
-        avg_inlet_height = sum(face["z_ground"] for face in inlet_faces) / len(
-            inlet_faces
-        )
-
-        # Save to file with mesh parameters
+        # Save to file
         with open(output_file, "w") as f:
-            f.write("# Inlet face information with mesh parameters\n")
+            f.write("# Inlet face information with mesh parameters and z0 roughness\n")
             f.write("# Generated by BlockMeshGenerator\n")
             f.write("#\n")
 
@@ -551,7 +584,7 @@ class BlockMeshGenerator:
             f.write("mesh_type=graded\n")
             f.write(f"total_z_cells={mesh_config.total_z_cells}\n")
 
-            # Write z_grading as parseable format
+            # Write z_grading
             f.write("z_grading=")
             grading_str = ";".join(
                 [f"{spec[0]},{spec[1]},{spec[2]}" for spec in mesh_config.z_grading]
@@ -563,14 +596,15 @@ class BlockMeshGenerator:
 
             # Face data section
             f.write("# FACE_DATA_START\n")
-            f.write("# Format: block_i, block_j, x_ground, y_ground, z_ground\n")
+            f.write("# Format: block_i, block_j, x_ground, y_ground, z_ground, z0\n")
             f.write(f"# Total inlet blocks: {len(inlet_faces)}\n")
+            if z0_interpolator:
+                f.write(f"# Z0 statistics: {z0_stats}\n")
 
             for face in inlet_faces:
                 f.write(f"{face['block_i']}, {face['block_j']}, ")
-                f.write(
-                    f"{face['x_ground']:.6f}, {face['y_ground']:.6f}, {face['z_ground']:.6f}\n"
-                )
+                f.write(f"{face['x_ground']:.6f}, {face['y_ground']:.6f}, {face['z_ground']:.6f}, ")
+                f.write(f"{face['z0']:.6f}\n")
 
             f.write("# FACE_DATA_END\n")
 
@@ -785,3 +819,161 @@ class BlockMeshGenerator:
         # Expansion ratio is last_cell / first_cell
         expansion_ratio = cell_sizes[-1] / cell_sizes[0]
         return expansion_ratio """
+    
+    def generate_z0_field(
+        self,
+        vtk_file: str,
+        roughness_data: np.ndarray,
+        roughness_transform: object,
+        output_file: str,
+        default_z0: float = 0.1
+    ):
+        """
+        Generate OpenFOAM z0 field file from roughness map and VTK mesh.
+        
+        Args:
+            vtk_file: Path to VTK terrain file
+            roughness_data: 2D roughness array (with NaN outside rotated crop)
+            roughness_transform: Affine transform for roughness grid
+            output_file: Output path for z0 field file (e.g. '0/include/z0Values')
+            default_z0: Default roughness for points outside roughness coverage (fallback only)
+        """
+        from scipy.interpolate import RegularGridInterpolator
+        
+        print("\n" + "="*60)
+        print("Generating z0 field for OpenFOAM")
+        print("="*60)
+        
+        # Read VTK mesh
+        mesh = pv.read(vtk_file)
+        nx, ny, _ = mesh.dimensions
+        points = mesh.points.reshape((ny, nx, 3))
+        
+        # Extract ground face centers (same logic as blockMeshDict generation)
+        z_coords = points[:, :, 2]
+        valid_mask = ~np.isnan(z_coords)
+        
+        ground_face_centers = []
+        
+        # Iterate through cells (same order as blockMeshDict ground faces)
+        for j in range(ny - 1):
+            for i in range(nx - 1):
+                # Check if all 4 corners are valid (same as blockMeshDict logic)
+                corners_valid = (
+                    valid_mask[j, i] and valid_mask[j, i+1] and 
+                    valid_mask[j+1, i+1] and valid_mask[j+1, i]
+                )
+                
+                if corners_valid:
+                    # Get 4 corner points of ground face
+                    p0 = points[j, i, :2]       # (x, y) only
+                    p1 = points[j, i+1, :2]
+                    p2 = points[j+1, i+1, :2]
+                    p3 = points[j+1, i, :2]
+                    
+                    # Calculate face center
+                    face_center = (p0 + p1 + p2 + p3) / 4.0
+                    ground_face_centers.append(face_center)
+        
+        ground_face_centers = np.array(ground_face_centers)
+        n_faces = len(ground_face_centers)
+        
+        print(f"Found {n_faces} ground faces")
+        print(f"Ground face center bounds: X[{ground_face_centers[:, 0].min():.2f}, {ground_face_centers[:, 0].max():.2f}], "
+            f"Y[{ground_face_centers[:, 1].min():.2f}, {ground_face_centers[:, 1].max():.2f}]")
+        
+        # Prepare roughness grid for interpolation
+        nrows, ncols = roughness_data.shape
+        
+        # Get coordinate arrays from transform
+        x_min = roughness_transform.c
+        y_max = roughness_transform.f
+        x_res = roughness_transform.a
+        y_res = -roughness_transform.e  # Usually negative
+        
+        x_coords_rough = np.arange(ncols) * x_res + x_min
+        y_coords_rough = np.arange(nrows) * (-y_res) + y_max  # Descending
+        
+        print(f"Roughness grid: {nrows}x{ncols}")
+        print(f"Roughness bounds: X[{x_coords_rough[0]:.2f}, {x_coords_rough[-1]:.2f}], "
+            f"Y[{y_coords_rough[-1]:.2f}, {y_coords_rough[0]:.2f}]")
+        print(f"Valid roughness pixels: {np.sum(~np.isnan(roughness_data))} / {roughness_data.size}")
+        
+        # For interpolation, we need to handle NaN values
+        # Option 1: Use nearest-neighbor to fill NaN gaps first
+        valid_mask_rough = ~np.isnan(roughness_data)
+        
+        if not np.any(valid_mask_rough):
+            raise ValueError("No valid roughness data in cropped region")
+        
+        # Fill NaN using nearest valid value (for interpolation continuity)
+        # This is better than using default_z0 everywhere
+        from scipy.ndimage import distance_transform_edt
+        
+        roughness_data_filled = roughness_data.copy()
+        
+        # Find nearest valid pixel for each NaN pixel
+        invalid_mask = np.isnan(roughness_data)
+        if np.any(invalid_mask):
+            # Distance transform to find nearest valid pixel
+            indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
+            roughness_data_filled[invalid_mask] = roughness_data[tuple(indices[:, invalid_mask])]
+        
+        print(f"Filled {np.sum(invalid_mask)} NaN pixels using nearest neighbor propagation")
+        
+        # Create interpolator (bilinear)
+        interpolator = RegularGridInterpolator(
+            (y_coords_rough, x_coords_rough),  # Note: (y, x) order for (rows, cols)
+            roughness_data_filled,
+            method='linear',
+            bounds_error=False,
+            fill_value=default_z0  # Fallback for points outside grid (shouldn't happen)
+        )
+        
+        # Interpolate z0 at ground face centers
+        face_z0_values = interpolator(ground_face_centers[:, [1, 0]])  # (y, x) order
+        
+        # Check if any face centers fell outside roughness coverage
+        outside_count = np.sum(face_z0_values == default_z0)
+        if outside_count > 0:
+            print(f"WARNING: {outside_count} face centers fell outside roughness coverage, using default z0={default_z0}")
+        
+        # Statistics
+        print(f"\nZ0 statistics:")
+        print(f"  Min: {face_z0_values.min():.4f}")
+        print(f"  Max: {face_z0_values.max():.4f}")
+        print(f"  Mean: {face_z0_values.mean():.4f}")
+        print(f"  Median: {np.median(face_z0_values):.4f}")
+        
+        # Create output directory
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write OpenFOAM format
+        with open(output_file, 'w') as f:
+            f.write("// Surface roughness length z0 for ground patch\n")
+            f.write("// Generated from roughness map\n")
+            f.write("// Format: nonuniform List<scalar>\n")
+            f.write("// Include in 0/nut using: z0 #include \"include/z0Values\";\n")
+            f.write("//\n")
+            f.write(f"nonuniform List<scalar>\n")
+            f.write(f"{n_faces}\n")
+            f.write("(\n")
+            
+            # Write values (one per line for readability)
+            for z0_val in face_z0_values:
+                f.write(f"    {z0_val:.6f}\n")
+            
+            f.write(")\n")
+        
+        print(f"\nSuccessfully wrote z0 field to: {output_file}")
+        print(f"Total faces: {n_faces}")
+        print("="*60)
+        
+        return {
+        'n_faces': n_faces,
+        'z0_min': float(face_z0_values.min()),
+        'z0_max': float(face_z0_values.max()),
+        'z0_mean': float(face_z0_values.mean()),
+        'output_file': str(output_file)
+    }

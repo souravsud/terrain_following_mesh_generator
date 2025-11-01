@@ -24,12 +24,13 @@ class TerrainMeshPipeline:
         self.blockmesh_generator = BlockMeshGenerator()
         self.metadata = {}
     
-    def run(self, dem_path: Union[str, Path], 
+    def run(self, dem_path: Union[str, Path],
            terrain_config: TerrainConfig, 
            grid_config: GridConfig,
            mesh_config: Optional[MeshConfig] = None,
            boundary_config: Optional[BoundaryConfig] = None,
            visualization_config: Optional[VisualizationConfig] = None,
+           rmap_path: Optional[Union[str, Path]] = None,
            output_dir: Optional[Union[str, Path]] = None, 
            create_blockmesh: bool = True,
            save_metadata: bool = True) -> Dict:
@@ -53,12 +54,17 @@ class TerrainMeshPipeline:
         
         # Step 1: Load and prepare DEM
         print("\n[1/5] Loading and preparing DEM...")
-        utm_dem_path = self.processor.load_and_prepare_dem(dem_path)
+        dem_path = self.processor.load_and_prepare_raster_data(dem_path)
+        print(f"Prepared DEM path: {dem_path}")
 
         # Step 2: Extract terrain  
-        print("\n[2/5] Extracting rotated terrain...")
-        elevation_data, transform, crs, pixel_res, crop_mask = self.processor.extract_rotated_terrain(utm_dem_path, terrain_config)
+        print("\n[2/5] Extracting rotated elevation and roughness maps...")
+        elevation_data, transform, crs, pixel_res, crop_mask = self.processor.extract_rotated_terrain(dem_path, terrain_config)
 
+        if rmap_path:
+            roughness_data, roughness_transform = self.processor.extract_rotated_rmap(rmap_path, terrain_config)
+        else:
+            roughness_data, roughness_transform = None, None
         # Step 3: Apply boundary treatment
         print("\n[3/5] Applying boundary treatment...")
         treated_elevation, boundary_elevations, treated_mask, zones = self.boundary_treatment.process_boundaries(
@@ -79,6 +85,20 @@ class TerrainMeshPipeline:
         vtk_path = output_dir / 'terrain_structured.vtk'
         grid.save(str(vtk_path))
         
+        # Step 5b: Generate z0 field if roughness map provided
+        if rmap_path and roughness_data is not None:
+            print("\n[5b/6] Generating z0 roughness field...")
+            z0_file = output_dir / '0' / 'include' / 'z0Values'
+            z0_stats = self.blockmesh_generator.generate_z0_field(
+                vtk_file=str(vtk_path),
+                roughness_data=roughness_data,
+                roughness_transform=roughness_transform,
+                output_file=str(z0_file),
+                default_z0=0.1
+            )
+            print(f"Z0 field saved with {z0_stats['n_faces']} faces")
+        
+        #Visualizations
         if visualization_config.create_plots:
             # Store original DEM for visualization
             original_dem = elevation_data.copy()  # Before boundary treatment
@@ -91,6 +111,11 @@ class TerrainMeshPipeline:
                 treated_elevation, # Final output (same for now)
                 output_dir,
                 grid
+            )
+        # After generating z0 field
+        if visualization_config.create_plots and rmap_path and roughness_data is not None:
+            self.visualizer.create_roughness_plots(
+                roughness_data, roughness_transform, z0_stats, output_dir, str(vtk_path)
             )
         
         # Generate blockMeshDict if requested
@@ -105,7 +130,6 @@ class TerrainMeshPipeline:
             metadata_path = output_dir / 'pipeline_metadata.json'
             self._save_metadata(
                 dem_path=dem_path,
-                utm_dem_path=utm_dem_path,
                 terrain_config=terrain_config,
                 grid_config=grid_config,
                 mesh_config=mesh_config,
@@ -153,7 +177,7 @@ class TerrainMeshPipeline:
             
             "input_files": {
                 "original_dem": str(kwargs['dem_path']),
-                "utm_dem": str(kwargs['utm_dem_path'])
+                "utm_dem": str(kwargs['dem_path'])
             },
             
             "output_files": {

@@ -22,8 +22,8 @@ grid:
 
 mesh:
   domain_height: 3000.0
-  first_cell_height: 1.0
   total_z_cells: 55  
+  terrain_normal_first_layer: true
   z_grading:
     - [0.04, 0.50, 1.4565]   
     - [0.96, 0.50, 85.0]
