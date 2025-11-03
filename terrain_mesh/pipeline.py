@@ -90,12 +90,12 @@ class TerrainMeshPipeline:
             print("\n[5b/6] Generating z0 roughness field...")
             z0_file = output_dir / '0' / 'include' / 'z0Values'
             z0_stats = self.blockmesh_generator.generate_z0_field(
-                vtk_file=str(vtk_path),
-                roughness_data=roughness_data,
-                roughness_transform=roughness_transform,
-                output_file=str(z0_file),
-                default_z0=0.1
-            )
+                                                                    vtk_file=str(vtk_path),
+                                                                    roughness_data=roughness_data,
+                                                                    roughness_transform=roughness_transform,
+                                                                    output_file=str(z0_file),
+                                                                    default_z0=0.1
+                                                                )
             print(f"Z0 field saved with {z0_stats['n_faces']} faces")
         
         #Visualizations

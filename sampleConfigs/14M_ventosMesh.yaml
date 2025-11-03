@@ -1,24 +1,24 @@
 # Terrain Mesh Configuration
 
 terrain:
-  center_lat: 39.7125934404 
-  center_lon: -7.7371348133
+  center_lat: 39.710694
+  center_lon: -7.738472
   crop_size_km: 19.2
   rotation_deg: 45
   smoothing_sigma: 0
   center_coordinates: false
 
 grid:
-  nx: 320
-  ny: 470
+  nx: 322
+  ny: 472
   x_grading:
     - [0.395835, 0.1875, 0.05]
     - [0.20833, 0.625, 1.0]
     - [0.395835, 0.1875, 20.0]
   y_grading:
-    - [0.34375, 0.181, 0.05]
-    - [0.3125, 0.638, 1.0]
-    - [0.34375, 0.181, 20.0]
+    - [0.34375, 0.143, 0.05]
+    - [0.3125, 0.714, 1.0]
+    - [0.34375, 0.143, 20.0]
 
 mesh:
   domain_height: 3000.0

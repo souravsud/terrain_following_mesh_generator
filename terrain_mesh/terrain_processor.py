@@ -69,6 +69,7 @@ class TerrainProcessor:
             elevation_data, transform, crs, pixel_res, crop_mask = self.crop_rotated_dem_dat(
                 dem_path, center_x, center_y, config.crop_size_km, config.rotation_deg
             )
+            self.original_crs = crs
         else:
             #GeoTIFF logic
             elevation_data, transform, crs, pixel_res, crop_mask = self.crop_rotated_dem_geotiff(
@@ -265,6 +266,9 @@ class TerrainProcessor:
                 print("DEM appears to be in geographic coordinates. Reprojecting...")
                 utm_dem_path, utm_crs = self.reproject_to_utm(dem_path)
                 return self.crop_rotated_dem_geotiff(utm_dem_path, center_lat, center_lon, crop_size_km, rotation_deg, utm_crs)
+            
+            #saving crs data for roughness map processing
+            self.original_crs = src.crs
             
             crop_size_m = crop_size_km * 1000
             
@@ -531,12 +535,34 @@ class TerrainProcessor:
         return roughness_data, transform
 
     def _crop_roughness_geotiff(self, rmap_path, center_utm_x, center_utm_y, 
-                                crop_size_m, rotation_deg, expanded_bounds):
+                            crop_size_m, rotation_deg, expanded_bounds):
         """Crop GeoTIFF roughness map (for GeoTIFF DEM)"""
         
         with rasterio.open(rmap_path) as src:
+            print(f"Loading roughness GeoTIFF from: {rmap_path}")
+            print(f"Roughness map CRS: {src.crs}")
+            print(f"Roughness map bounds: {src.bounds}")
             
-            # Convert to pixel coordinates
+            # Check if roughness map needs reprojection
+            if src.crs.is_geographic:
+                # Geographic coordinates - need to reproject to UTM
+                print("Roughness map is in geographic coordinates. Reprojecting to UTM...")
+                
+                # Use the same UTM CRS as the DEM
+                if self.original_crs is None:
+                    raise ValueError("DEM CRS not available. Process DEM before roughness map.")
+                
+                # Reproject roughness map
+                utm_rmap_path, _ = self.reproject_to_utm(rmap_path)
+                
+                # Recursively call with reprojected file
+                return self._crop_roughness_geotiff(utm_rmap_path, center_utm_x, center_utm_y, 
+                                                crop_size_m, rotation_deg, expanded_bounds)
+            
+            # Roughness map is already in projected coordinates (assumed UTM-compatible)
+            print("Roughness map is in projected coordinates")
+            
+            # Convert expanded bounds (UTM) to pixel coordinates
             left_px = int((expanded_bounds[0] - src.bounds.left) / src.res[0])
             right_px = int((expanded_bounds[2] - src.bounds.left) / src.res[0])
             bottom_px = int((src.bounds.top - expanded_bounds[3]) / src.res[1])
@@ -548,9 +574,14 @@ class TerrainProcessor:
             bottom_px = max(0, bottom_px)
             top_px = min(src.height, top_px)
             
+            print(f"Roughness pixel window: ({left_px}, {bottom_px}, {right_px}, {top_px})")
+            
             # Read data
             window = rasterio.windows.Window.from_slices((bottom_px, top_px), (left_px, right_px))
             expanded_data = src.read(1, window=window)
+            
+            if expanded_data.size == 0:
+                raise ValueError("Roughness crop area is empty. Check coordinate alignment with DEM.")
             
             # Get transform
             expanded_transform = rasterio.windows.transform(window, src.transform)
@@ -561,7 +592,10 @@ class TerrainProcessor:
             y_coords = np.arange(nrows) * (-src.res[1]) + expanded_transform.f
             x_grid, y_grid = np.meshgrid(x_coords, y_coords)
             
-            # Apply rotation mask (REUSE)
+            print(f"Roughness crop shape: {expanded_data.shape}")
+            print(f"Roughness crop bounds: X[{x_coords[0]:.2f}, {x_coords[-1]:.2f}], Y[{y_coords[-1]:.2f}, {y_coords[0]:.2f}]")
+            
+            # Apply rotation mask
             crop_mask = self.create_rotated_crop_mask(
                 center_utm_x, center_utm_y, crop_size_m, rotation_deg, x_grid, y_grid
             )
@@ -569,5 +603,8 @@ class TerrainProcessor:
             # Apply mask
             cropped_data = expanded_data.copy()
             cropped_data[~crop_mask] = np.nan
+            
+            print(f"Roughness resolution: {src.res[0]:.2f} x {abs(src.res[1]):.2f} m")
+            print(f"Valid roughness pixels: {np.sum(crop_mask)} / {crop_mask.size}")
             
             return cropped_data, expanded_transform

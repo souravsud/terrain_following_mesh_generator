@@ -933,6 +933,8 @@ class BlockMeshGenerator:
         # Interpolate z0 at ground face centers
         face_z0_values = interpolator(ground_face_centers[:, [1, 0]])  # (y, x) order
         
+        print("Setting minimum roughness to 0.0002 m to avoid zero values")
+        face_z0_values = np.maximum(face_z0_values, 0.0002)
         # Check if any face centers fell outside roughness coverage
         outside_count = np.sum(face_z0_values == default_z0)
         if outside_count > 0:
