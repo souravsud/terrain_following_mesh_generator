@@ -1,14 +1,14 @@
 terrain:
-  center_lat: 39.71121111
-  center_lon: -7.73483333
-  crop_size_km: 25
+  center_lat: 39.710694
+  center_lon: -7.738472
+  crop_size_km: 19.2
   rotation_deg: 45
   smoothing_sigma: 0
   center_coordinates: false
   
 grid:
-  nx: 384
-  ny: 384
+  nx: 213
+  ny: 280
   x_grading:
     - [0.35, 0.12, 0.05]   # [length_fraction, cell_fraction, expansion_ratio]
     - [0.30, 0.76, 1.0]
@@ -20,7 +20,7 @@ grid:
     
 mesh:
   domain_height: 3000.0
-  total_z_cells: 60
+  total_z_cells: 91
   terrain_normal_first_layer: true
   z_grading:
     - [0.033, 0.50, 1.0]   # Near ground refinement
@@ -33,9 +33,9 @@ mesh:
     sides: patch
     
 boundary:
-  aoi_fraction: 0.3
+  aoi_fraction: 0.3125
   boundary_mode: directional
-  flat_boundary_thickness_fraction: 0.08
+  flat_boundary_thickness_fraction: 0.05
   enabled_boundaries: [east, west]
   smoothing_method: mean
   kernel_progression: exponential

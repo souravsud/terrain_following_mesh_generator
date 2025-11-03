@@ -1,37 +1,36 @@
 # Terrain Mesh Configuration
 
 terrain:
-  center_lat: 39.71121111
-  center_lon: -7.73483333
-  crop_size_km: 25
+  center_lat: 39.710694
+  center_lon: -7.738472
+  crop_size_km: 19.2
   rotation_deg: 45
   smoothing_sigma: 0
   center_coordinates: false
 
 grid:
-  nx: 384
-  ny: 384
+  nx: 213
+  ny: 280
   x_grading:
-    - [0.35, 0.12, 0.05]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0]
+    - [0.395835, 0.1875, 0.05]
+    - [0.20833, 0.625, 1.0]
+    - [0.395835, 0.1875, 20.0]
   y_grading:
-    - [0.35, 0.12, 0.05]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0]
+    - [0.34375, 0.143, 0.05]
+    - [0.3125, 0.714, 1.0]
+    - [0.34375, 0.143, 20.0]
 
 mesh:
   domain_height: 3000.0
-  total_z_cells: 100 
+  total_z_cells: 91
   terrain_normal_first_layer: true
   z_grading:
-    - [0.033, 0.50, 1.0]   
-    - [0.967, 0.50, 100.0]
+    - [1.0, 1.0, 62.4]
 
 boundary:
-  aoi_fraction: 0.3
+  aoi_fraction: 0.3125
   boundary_mode: directional
-  flat_boundary_thickness_fraction: 0.08
+  flat_boundary_thickness_fraction: 0.05
   enabled_boundaries: [east, west]
   smoothing_method: mean
   kernel_progression: exponential
