@@ -59,13 +59,13 @@ class GridConfig:
 @dataclass
 class MeshConfig:
     """Configuration for OpenFOAM mesh generation"""
-
-    domain_height: float = 1000.0
-
+    domain_height: float = 4000.0
+    
     # Z-direction configuration
     z_grading: Optional[List[Tuple[float, float, float]]] = None
-    total_z_cells: int = 10
-
+    total_z_cells: Optional[int] = None
+    terrain_normal_first_layer: bool = False
+    
     patch_types: Optional[Dict[str, str]] = None
     extract_inlet_face_info: bool = True
 
@@ -78,11 +78,12 @@ class MeshConfig:
                 "outlet": "patch",
                 "sides": "patch",
             }
-
-        # Validate z_grading
+        
+        # Validate z_grading if specified
         if self.z_grading:
             self._validate_z_grading()
-
+        
+    
     def _validate_z_grading(self):
         """Validate z-direction grading specification"""
         length_sum = sum(spec[0] for spec in self.z_grading)
@@ -93,10 +94,7 @@ class MeshConfig:
                 f"z_grading length fractions must sum to 1.0, got {length_sum}"
             )
         if abs(cell_sum - 1.0) > 1e-6:
-            raise ValueError(
-                f"z_grading cell fractions must sum to 1.0, got {cell_sum}"
-            )
-
+            raise ValueError(f"z_grading cell fractions must sum to 1.0, got {cell_sum}")
 
 @dataclass
 class VisualizationConfig:

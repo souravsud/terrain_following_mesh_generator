@@ -21,6 +21,7 @@ grid:
 mesh:
   domain_height: 3000.0
   total_z_cells: 60
+  terrain_normal_first_layer: true
   z_grading:
     - [0.033, 0.50, 1.0]   # Near ground refinement
     - [0.967, 0.50, 100.0] # Expansion to domain top
