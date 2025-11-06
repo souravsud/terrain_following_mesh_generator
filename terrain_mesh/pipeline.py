@@ -125,9 +125,9 @@ class TerrainMeshPipeline:
                 original_dem=elevation_data,
                 zones=zones,
                 treated_elevation=treated_elevation,
-                final_output=treated_elevation,
+                final_elevation=treated_elevation,
                 output_dir=output_dir,
-                grid=grid
+                pv_grid=grid
             )
             
             # Roughness plots if available

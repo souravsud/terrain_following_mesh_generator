@@ -234,7 +234,7 @@ class BlockMeshGenerator:
                     domain_height,
                     mock_config,
                 )
-
+            os.makedirs(os.path.dirname(output_dict_file), exist_ok=True)
             # Write blockMeshDict
             with open(output_dict_file, "w") as f:
                 # Header

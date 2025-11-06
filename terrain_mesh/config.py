@@ -12,15 +12,11 @@ class TerrainConfig:
     center_lat: float
     center_lon: float
     crop_size_km: float
-    rotation_deg: float = 0.0
+    rotation_deg: float
     smoothing_sigma: float = 2.0
     center_coordinates: bool = False
 
     def __post_init__(self):
-        if not (-90 <= self.center_lat <= 90):
-            raise ValueError("Latitude must be between -90 and 90")
-        if not (-180 <= self.center_lon <= 180):
-            raise ValueError("Longitude must be between -180 and 180")
         if self.crop_size_km <= 0:
             raise ValueError("Crop size must be positive")
 
