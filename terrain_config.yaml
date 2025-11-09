@@ -2,38 +2,39 @@ terrain:
   center_lat: 39.71121111
   center_lon: -7.73483333
   crop_size_km: 30
-  rotation_deg: 45
+  rotation_deg: 15
   smoothing_sigma: 0
   center_coordinates: false
   
 grid:
-  nx: 395
-  ny: 395
+  nx: 361
+  ny: 361
   x_grading:
-    - [0.35, 0.12, 0.05]   # [length_fraction, cell_fraction, expansion_ratio]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0]
+    - [0.35, 0.0835, 0.025]
+    - [0.30, 0.833, 1.0]
+    - [0.35, 0.0835, 40.0] 
   y_grading:
-    - [0.35, 0.12, 0.05]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0]
+    - [0.35, 0.0835, 0.025]
+    - [0.30, 0.833, 1.0]
+    - [0.35, 0.0835, 40.0] 
     
 mesh:
   domain_height: 3000.0
-  total_z_cells: 91
+  total_z_cells: 66
   terrain_normal_first_layer: true
-  z_grading: 
-    - [1, 1, 62.4]
+  z_grading:
+    - [1.0, 1.0, 150]
+
 
 boundary:
-  aoi_fraction: 0.36
+  aoi_fraction: 0.3
   boundary_mode: directional
-  flat_boundary_thickness_fraction: 0.05
+  flat_boundary_thickness_fraction: 0.08
   enabled_boundaries: [east, west]
   smoothing_method: mean
   kernel_progression: exponential
-  base_kernel_size: 5
-  progression_rate: 10
+  base_kernel_size: 4
+  progression_rate: 36
   boundary_flatness_mode: blend_target
   
 visualization:

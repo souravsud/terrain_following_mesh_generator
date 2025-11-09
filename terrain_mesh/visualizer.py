@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from .config import VisualizationConfig
+from .utils import rotate_coordinates
 
 class TerrainVisualizer:
     """Handle visualization of input and output data"""
@@ -15,8 +16,13 @@ class TerrainVisualizer:
     def __init__(self, config: Optional[VisualizationConfig] = None):
         self.config = config or VisualizationConfig()
     
-    def create_overview_plots(self, original_dem: np.ndarray, zones: Dict, treated_elevation: np.ndarray, 
-                         final_elevation: np.ndarray, output_dir: Path,pv_grid=None):
+    def create_overview_plots(self, original_dem: np.ndarray, 
+                              zones: Dict, 
+                              treated_elevation: np.ndarray, 
+                              output_dir: Path,
+                              grid=None,
+                              rotation_deg=None, 
+                              crop_mask=None):
         """Create diagnostic plots for boundary treatment"""
         
         if not self.config.create_plots:
@@ -49,6 +55,44 @@ class TerrainVisualizer:
         ax.set_title('Smoothing Zones\n(AOI=1, Transition=2, Blend=3, Flat=4)')
         plt.colorbar(im2, ax=ax, label='Zone Type')
         
+        if rotation_deg is not None and crop_mask is not None:
+            
+            rows, cols = np.where(crop_mask)
+            center_row, center_col = np.mean(rows), np.mean(cols)
+            
+            y_grid, x_grid = np.mgrid[0:crop_mask.shape[0], 0:crop_mask.shape[1]]
+            rel_x = x_grid - center_col
+            rel_y = y_grid - center_row
+            
+            flow_x, flow_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg)
+            
+            valid_flow_x = flow_x[crop_mask]
+            min_x, max_x = valid_flow_x.min(), valid_flow_x.max()
+            
+            # Find inlet (west boundary - upwind)
+            inlet_mask = (flow_x <= (min_x + 50)) & crop_mask
+            if np.any(inlet_mask):
+                inlet_points = np.where(inlet_mask)
+                inlet_row = np.mean(inlet_points[0])
+                inlet_col = np.mean(inlet_points[1])
+                ax.plot(inlet_col, inlet_row, 'r^', markersize=15, label='INLET (West/Upwind)')
+                ax.text(inlet_col, inlet_row - 30, 'Inlet', 
+                    color='red', fontsize=12, ha='center', weight='bold',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            # Find outlet (east boundary - downwind)
+            outlet_mask = (flow_x >= (max_x - 50)) & crop_mask
+            if np.any(outlet_mask):
+                outlet_points = np.where(outlet_mask)
+                outlet_row = np.mean(outlet_points[0])
+                outlet_col = np.mean(outlet_points[1])
+                ax.plot(outlet_col, outlet_row, 'bv', markersize=15, label='OUTLET (East/Downwind)')
+                ax.text(outlet_col, outlet_row + 30, 'Outlet', 
+                    color='blue', fontsize=12, ha='center', weight='bold',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            ax.legend(loc='upper right')
+        
         # 3. Treated terrain (after boundary processing)
         ax = axes[1, 0]
         im3 = ax.imshow(treated_elevation, cmap='terrain', origin='upper')
@@ -56,9 +100,9 @@ class TerrainVisualizer:
         plt.colorbar(im3, ax=ax, label='Elevation (m)')
         
         # 4. Final output using actual grid coordinates
-        if pv_grid is not None:
+        if grid is not None:
             ax = axes[1, 1]
-            points = pv_grid.points
+            points = grid.points
             
             # Downsample
             step = 20

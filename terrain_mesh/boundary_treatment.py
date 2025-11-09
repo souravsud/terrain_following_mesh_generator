@@ -4,6 +4,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, uniform_filter, median_filter, generic_filter
 from typing import Tuple, Dict, Optional, List
 from .config import BoundaryConfig
+from .utils import rotate_coordinates
 
 class BoundaryTreatment:
     """4-zone boundary smoothing: AOI → Transition → Blend → Flat"""
@@ -586,15 +587,10 @@ class BoundaryTreatment:
         
         y_grid, x_grid = np.mgrid[0:crop_mask.shape[0], 0:crop_mask.shape[1]]
         
-        rotation_rad = np.deg2rad(rotation_deg)
-        cos_theta = np.cos(rotation_rad)
-        sin_theta = np.sin(rotation_rad)
-        
         rel_x = x_grid - center_col
         rel_y = y_grid - center_row
         
-        flow_x = cos_theta * rel_x - sin_theta * rel_y
-        flow_y = sin_theta * rel_x + cos_theta * rel_y
+        flow_x, flow_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg)
         
         valid_flow_x = flow_x[crop_mask]
         valid_flow_y = flow_y[crop_mask]

@@ -804,21 +804,6 @@ class BlockMeshGenerator:
                 grading_parts.append(f"({length_frac} {cell_frac} {expansion_ratio})")
             grading_str = " ".join(grading_parts)
             return f"multiGrading (1 1 ({grading_str}))", first_cell_size
-
-    """ def _calculate_expansion_ratio_from_coords(self, coords):
-
-        if len(coords) < 3:
-            return 1.0
-
-        # Calculate cell sizes
-        cell_sizes = np.diff(coords)
-
-        if len(cell_sizes) < 2:
-            return 1.0
-
-        # Expansion ratio is last_cell / first_cell
-        expansion_ratio = cell_sizes[-1] / cell_sizes[0]
-        return expansion_ratio """
     
     def generate_z0_field(
         self,

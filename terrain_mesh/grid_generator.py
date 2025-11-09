@@ -4,12 +4,13 @@ from scipy.ndimage import map_coordinates
 from typing import Tuple
 
 from .config import GridConfig, TerrainConfig
+from .utils import rotate_coordinates
 
 class StructuredGridGenerator:
     """Generate structured grids from terrain data"""
     
     def create_structured_grid(self, elevation_data, transform, target_rows, target_cols, 
-                                                 rotation_deg, crop_mask, center_coordinates=True, 
+                                                 rotation_deg, crop_mask,centre_utm, center_coordinates=True, 
                                                  x_grading=None, y_grading=None):
         """
         Create a rotated structured grid that aligns with terrain orientation.
@@ -25,7 +26,7 @@ class StructuredGridGenerator:
         target_cols : int
             Number of columns in output grid
         rotation_deg : float
-            Rotation angle in degrees (positive = clockwise from north)
+            Meteorological wind direction (0°=N, 90°=E, 180°=S, 270°=W)
         crop_mask : np.ndarray
             Boolean mask defining terrain area
         center_coordinates : bool
@@ -64,16 +65,11 @@ class StructuredGridGenerator:
         print(f"Terrain center: ({terrain_center_x:.1f}, {terrain_center_y:.1f})")
         
         # 3. Rotate all terrain points to find bounds in rotated coordinate system
-        theta = np.radians(rotation_deg)
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        
-        # Translate to center, then rotate
-        x_centered = terrain_utm_x - terrain_center_x
-        y_centered = terrain_utm_y - terrain_center_y
-        
-        x_rotated = cos_theta * x_centered - sin_theta * y_centered
-        y_rotated = sin_theta * x_centered + cos_theta * y_centered
+        x_rotated, y_rotated = rotate_coordinates(
+                                                    terrain_utm_x, terrain_utm_y, 
+                                                    terrain_center_x, terrain_center_y, 
+                                                    rotation_deg, inverse=True
+                                                )
         
         # Find bounds in rotated space
         min_x_rot, max_x_rot = x_rotated.min(), x_rotated.max()
@@ -107,9 +103,11 @@ class StructuredGridGenerator:
         X_local, Y_local = np.meshgrid(x_coords, y_coords)
         
         # 5. Rotate grid back to UTM coordinates
-        X_rotated_back = cos_theta * X_local + sin_theta * Y_local
-        Y_rotated_back = -sin_theta * X_local + cos_theta * Y_local
-        
+        X_rotated_back, Y_rotated_back = rotate_coordinates(
+                                                            X_local, Y_local,
+                                                            0, 0,  # Already centered in rotated space
+                                                            rotation_deg, inverse=False
+                                                        )
         # 6. Translate back to UTM coordinates
         X_utm = X_rotated_back + terrain_center_x
         Y_utm = Y_rotated_back + terrain_center_y
@@ -304,7 +302,7 @@ class StructuredGridGenerator:
         return coords
     
     def create_grid(self, elevation_data: np.ndarray, transform, grid_config: GridConfig,
-               terrain_config: TerrainConfig, crop_mask: np.ndarray) -> pv.StructuredGrid:
+               terrain_config: TerrainConfig, crop_mask: np.ndarray, centre_utm) -> pv.StructuredGrid:
         """Create structured grid fitting terrain bounds exactly"""
         
         return self.create_structured_grid(
@@ -314,6 +312,7 @@ class StructuredGridGenerator:
             grid_config.nx,  # target_cols
             terrain_config.rotation_deg, 
             crop_mask,
+            centre_utm,
             center_coordinates=terrain_config.center_coordinates,
             x_grading=grid_config.x_grading, 
             y_grading=grid_config.y_grading

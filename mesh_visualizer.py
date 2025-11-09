@@ -14,67 +14,136 @@ from pathlib import Path
 from typing import List, Tuple
 
 
-def create_blockMesh_spacing(
-    n_points: int, grading_spec: List[Tuple[float, float, float]]
-) -> np.ndarray:
+def create_blockMesh_spacing(n_points, grading_spec):
     """
     Create variable spacing coordinates from 0 to 1 using blockMesh-style grading.
-    Matches the implementation in grid_generator.py
+
+    Parameters:
+    -----------
+    n_points : int
+        Total number of points
+    grading_spec : list of tuples
+        [(length_fraction, cell_fraction, expansion_ratio), ...]
+        - length_fraction: fraction of domain length for this region
+        - cell_fraction: fraction of total cells for this region
+        - expansion_ratio: last_cell_size/first_cell_size in this region
+
+    Returns:
+    --------
+    np.ndarray
+        Coordinate array from 0 to 1 with blockMesh-style spacing
     """
+
     total_cells = n_points - 1
+    n_regions = len(grading_spec)
+    print(f"Creating blockMesh spacing with {n_regions} regions, total cells: {total_cells}")
 
     # Extract specifications
     length_fractions = np.array([spec[0] for spec in grading_spec])
     cell_fractions = np.array([spec[1] for spec in grading_spec])
     expansion_ratios = np.array([spec[2] for spec in grading_spec])
 
-    # Calculate target cell counts
+    # Validate inputs
+    if abs(length_fractions.sum() - 1.0) > 1e-6:
+        raise ValueError(
+            f"Length fractions sum to {length_fractions.sum():.6f}, must sum to 1.0"
+        )
+
+    if abs(cell_fractions.sum() - 1.0) > 1e-6:
+        raise ValueError(
+            f"Cell fractions sum to {cell_fractions.sum():.6f}, must sum to 1.0"
+        )
+
+    # Calculate target cell counts (may not be integers)
     target_cells = cell_fractions * total_cells
+
+    # Round to integers and adjust to maintain total
     actual_cells = np.round(target_cells).astype(int)
 
     # Adjust for rounding errors
     cell_diff = total_cells - actual_cells.sum()
     if cell_diff != 0:
+        # Add/subtract cells from regions with largest rounding errors
         errors = target_cells - actual_cells
-        indices = np.argsort(errors)[::-1] if cell_diff > 0 else np.argsort(errors)
+        if cell_diff > 0:
+            # Need to add cells - add to regions with most positive error
+            indices = np.argsort(errors)[::-1]
+        else:
+            # Need to remove cells - remove from regions with most negative error
+            indices = np.argsort(errors)
+
         for i in range(abs(cell_diff)):
             actual_cells[indices[i]] += np.sign(cell_diff)
 
-    # Generate coordinates
-    coords = [0.0]
+    # Generate coordinates for each region
+    coords = [0.0]  # Start at 0
     current_pos = 0.0
 
-    for length_frac, cell_count, expansion_ratio in zip(
-        length_fractions, actual_cells, expansion_ratios
+    for i, (length_frac, actual_cell_count, expansion_ratio) in enumerate(
+        zip(length_fractions, actual_cells, expansion_ratios)
     ):
-        if cell_count == 0:
+        region_length = length_frac
+
+        if actual_cell_count == 0:
             continue
 
-        region_coords = generate_region_coordinates(cell_count, expansion_ratio)
-        region_coords_scaled = region_coords * length_frac + current_pos
+        # Generate spacing within this region
+        region_coords = generate_region_coordinates(
+            actual_cell_count, expansion_ratio
+        )
+
+        # Scale to region length and add to current position
+        region_coords_scaled = region_coords * region_length + current_pos
+
+        # Add coordinates (skip the first one as it's already included)
         coords.extend(region_coords_scaled[1:])
-        current_pos += length_frac
+
+        current_pos += region_length
 
     return np.array(coords)
 
+def generate_region_coordinates(n_cells, expansion_ratio):
+    """
+    Generate coordinates within a single region [0,1] with given expansion ratio.
 
-def generate_region_coordinates(n_cells: int, expansion_ratio: float) -> np.ndarray:
-    """Generate coordinates within a region with geometric progression."""
-    if n_cells <= 1:
+    Parameters:
+    -----------
+    n_cells : int
+        Number of cells in this region
+    expansion_ratio : float
+        Ratio of last_cell_size/first_cell_size
+
+    Returns:
+    --------
+    np.ndarray
+        Coordinates from 0 to 1 for this region
+    """
+
+    if n_cells == 0:
         return np.array([0.0, 1.0])
 
+    if n_cells == 1:
+        return np.array([0.0, 1.0])
+
+    # For uniform spacing (expansion_ratio ≈ 1)
     if abs(expansion_ratio - 1.0) < 1e-6:
         return np.linspace(0.0, 1.0, n_cells + 1)
 
-    # Geometric progression
-    r = expansion_ratio ** (1.0 / (n_cells - 1))
+    # For geometric progression
+    r = expansion_ratio ** (
+        1.0 / (n_cells - 1)
+    )  # Common ratio between adjacent cells
 
+    # Calculate first cell size
     if abs(r - 1.0) < 1e-6:
         ds = 1.0 / n_cells
     else:
         ds = (r - 1.0) / (r**n_cells - 1.0)
 
+    # Generate cell sizes
     cell_sizes = ds * r ** np.arange(n_cells)
+
+    # Generate coordinates
     coords = np.zeros(n_cells + 1)
     coords[1:] = np.cumsum(cell_sizes)
 
@@ -87,11 +156,10 @@ def calculate_z_coordinates(
     z_grading: List[Tuple[float, float, float]],
     total_z_cells: int,
 ) -> np.ndarray:
-
-    # No first cell, standard grading
+    
+    available_height = domain_height - ground_height
     z_norm = create_blockMesh_spacing(total_z_cells + 1, z_grading)
-    return ground_height + z_norm * domain_height
-
+    return ground_height + z_norm * available_height
 
 def load_config(config_path: str):
     """Load and parse YAML config."""

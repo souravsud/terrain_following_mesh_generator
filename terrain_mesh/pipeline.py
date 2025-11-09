@@ -1,12 +1,8 @@
 """Main pipeline orchestrating the complete terrain-to-mesh workflow"""
-
-import json
 from pathlib import Path
 from typing import Union, Optional, Dict
-from datetime import datetime
-import numpy as np
-
 from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig
+from .utils import write_metadata
 from .terrain_processor import TerrainProcessor
 from .boundary_treatment import BoundaryTreatment
 from .grid_generator import StructuredGridGenerator
@@ -55,7 +51,7 @@ class TerrainMeshPipeline:
         
         # Step 1: Extract terrain and roughness data
         print("\n[1/6] Extracting terrain elevation...")
-        elevation_data, transform, crs, pixel_res, crop_mask = \
+        elevation_data, transform, crs, pixel_res, crop_mask, centre_utm = \
             self.processor.extract_rotated_terrain(dem_path, terrain_config)
         
         roughness_data, roughness_transform = None, None
@@ -78,7 +74,8 @@ class TerrainMeshPipeline:
             transform, 
             grid_config, 
             terrain_config, 
-            treated_mask
+            treated_mask,
+            centre_utm
         )
         
         # Step 4: Save VTK output
@@ -122,13 +119,14 @@ class TerrainMeshPipeline:
             
             # Terrain overview plots
             self.visualizer.create_overview_plots(
-                original_dem=elevation_data,
-                zones=zones,
-                treated_elevation=treated_elevation,
-                final_elevation=treated_elevation,
-                output_dir=output_dir,
-                pv_grid=grid
-            )
+                                                    original_dem=elevation_data,
+                                                    zones=zones,
+                                                    treated_elevation=treated_elevation,
+                                                    output_dir=output_dir,
+                                                    grid=grid,
+                                                    rotation_deg=terrain_config.rotation_deg,
+                                                    crop_mask=crop_mask
+                                                )
             
             # Roughness plots if available
             if roughness_data is not None and z0_stats is not None:
@@ -147,7 +145,7 @@ class TerrainMeshPipeline:
         if save_metadata:
             print("\nSaving pipeline metadata...")
             metadata_path = output_dir / 'pipeline_metadata.json'
-            self._save_metadata(
+            write_metadata(
                 dem_path=dem_path,
                 rmap_path=rmap_path,
                 terrain_config=terrain_config,
@@ -183,106 +181,3 @@ class TerrainMeshPipeline:
         }
         
         return results
-    
-    def _save_metadata(self, **kwargs):
-        """Save pipeline metadata to JSON file"""
-        
-        metadata = {
-            "pipeline_info": {
-                "timestamp": datetime.now().isoformat(),
-                "version": "2.0",
-                "pipeline_class": self.__class__.__name__
-            },
-            
-            "input_files": {
-                "dem_path": str(kwargs['dem_path']),
-                "roughness_path": str(kwargs['rmap_path']) if kwargs['rmap_path'] else None
-            },
-            
-            "output_files": {
-                "output_directory": str(kwargs['output_dir']),
-                "vtk_mesh": str(kwargs['vtk_path']),
-                "blockmesh_dict": str(kwargs['blockmesh_path']) if kwargs['blockmesh_path'] else None,
-                "metadata_file": str(kwargs['metadata_path'])
-            },
-            
-            "configurations": {
-                "terrain": {
-                    "center_lat": kwargs['terrain_config'].center_lat,
-                    "center_lon": kwargs['terrain_config'].center_lon,
-                    "center_utm": kwargs['terrain_config'].center_coordinates,
-                    "crop_size_km": kwargs['terrain_config'].crop_size_km,
-                    "rotation_deg": kwargs['terrain_config'].rotation_deg,
-                    "smoothing_sigma": kwargs['terrain_config'].smoothing_sigma
-                },
-                
-                "grid": {
-                    "nx": kwargs['grid_config'].nx,
-                    "ny": kwargs['grid_config'].ny,
-                    "x_grading": kwargs['grid_config'].x_grading,
-                    "y_grading": kwargs['grid_config'].y_grading
-                },
-                
-                "mesh": {
-                    "domain_height": kwargs['mesh_config'].domain_height,
-                    "total_z_cells": kwargs['mesh_config'].total_z_cells,
-                    "z_grading": kwargs['mesh_config'].z_grading,
-                    "patch_types": kwargs['mesh_config'].patch_types
-                } if kwargs['mesh_config'] else None,
-                
-                "boundary": {
-                    "aoi_fraction": kwargs['boundary_config'].aoi_fraction,
-                    "boundary_mode": kwargs['boundary_config'].boundary_mode,
-                    "flat_boundary_thickness_fraction": kwargs['boundary_config'].flat_boundary_thickness_fraction,
-                    "enabled_boundaries": kwargs['boundary_config'].enabled_boundaries,
-                    "smoothing_method": kwargs['boundary_config'].smoothing_method,
-                    "kernel_progression": kwargs['boundary_config'].kernel_progression,
-                    "base_kernel_size": kwargs['boundary_config'].base_kernel_size,
-                    "max_kernel_size": kwargs['boundary_config'].max_kernel_size,
-                    "progression_rate": kwargs['boundary_config'].progression_rate,
-                    "boundary_flatness_mode": kwargs['boundary_config'].boundary_flatness_mode,
-                    "uniform_elevation": kwargs['boundary_config'].uniform_elevation
-                },
-                
-                "visualization": {
-                    "create_plots": kwargs['visualization_config'].create_plots,
-                    "show_grid_lines": kwargs['visualization_config'].show_grid_lines,
-                    "save_high_res": kwargs['visualization_config'].save_high_res,
-                    "plot_format": kwargs['visualization_config'].plot_format,
-                    "dpi": kwargs['visualization_config'].dpi
-                }
-            },
-            
-            "processing_results": {
-                "coordinate_system": {
-                    "crs": str(kwargs['crs']),
-                    "pixel_resolution": kwargs['pixel_res'],
-                    "transform": list(kwargs['transform']) if hasattr(kwargs['transform'], '__iter__') else str(kwargs['transform'])
-                },
-                
-                "elevation_statistics": {
-                    "original": self._get_array_stats(kwargs['elevation_data']),
-                    "treated": self._get_array_stats(kwargs['treated_elevation'])
-                },
-                
-                "grid_statistics": {
-                    "number_of_points": kwargs['grid'].GetNumberOfPoints() if hasattr(kwargs['grid'], 'GetNumberOfPoints') else None,
-                    "number_of_cells": kwargs['grid'].GetNumberOfCells() if hasattr(kwargs['grid'], 'GetNumberOfCells') else None,
-                    "bounds": list(kwargs['grid'].GetBounds()) if hasattr(kwargs['grid'], 'GetBounds') else None
-                }
-            }
-        }
-        
-        # Save to file
-        with open(kwargs['metadata_path'], 'w') as f:
-            json.dump(metadata, f, indent=2, default=str)
-    
-    def _get_array_stats(self, data: np.ndarray) -> dict:
-        """Helper to extract statistics from numpy array"""
-        return {
-            "shape": list(data.shape),
-            "min": float(np.nanmin(data)),
-            "max": float(np.nanmax(data)),
-            "mean": float(np.nanmean(data)),
-            "std": float(np.nanstd(data))
-        }

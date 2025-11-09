@@ -1,4 +1,5 @@
 from .config import TerrainConfig
+from .utils import rotate_coordinates,smooth_terrain_for_cfd
 from typing import Union, Tuple
 from pathlib import Path
 import numpy as np
@@ -8,7 +9,6 @@ from rasterio.crs import CRS
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
 from pyproj import Transformer
-from scipy.ndimage import gaussian_filter
 import warnings
 
 warnings.filterwarnings('ignore', category=rasterio.errors.NotGeoreferencedWarning)
@@ -63,7 +63,7 @@ class TerrainProcessor:
                 sigma=config.smoothing_sigma
             )
         
-        return elevation_data, transform, crs, pixel_res, crop_mask
+        return elevation_data, transform, crs, pixel_res, crop_mask, center_utm
 
     def extract_rotated_rmap(self, rmap_path: str, config: TerrainConfig) -> Tuple[np.ndarray, object]:
         """
@@ -326,54 +326,12 @@ class TerrainProcessor:
         """
         Create a mask for a rotated rectangular crop.
         """
-        # Convert rotation to radians
-        rotation_rad = np.deg2rad(rotation_deg-90)
-        
-        # Half dimensions of the crop
         half_size = crop_size_m / 2
-        
-        # Create coordinate grids relative to center
         rel_x = x_coords - center_x
         rel_y = y_coords - center_y
         
-        # Apply inverse rotation to coordinates (rotate coordinate system, not the crop)
-        cos_theta = np.cos(-rotation_rad)
-        sin_theta = np.sin(-rotation_rad)
+        # Use helper with inverse rotation
+        rotated_x, rotated_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg,inverse=True)
         
-        rotated_x = rel_x * cos_theta - rel_y * sin_theta
-        rotated_y = rel_x * sin_theta + rel_y * cos_theta
-        
-        # Check if points fall within the rectangular bounds
         mask = ((np.abs(rotated_x) <= half_size) & (np.abs(rotated_y) <= half_size))
-        
         return mask
-    
-    def smooth_terrain_for_cfd(self, elevation_data, sigma=2.0, preserve_nan=True):
-        """
-        Smooth terrain data for better CFD mesh quality
-        
-        Parameters:
-        - sigma: smoothing strength (higher = more smoothing)
-        - preserve_nan: keep NaN areas (outside rotated crop) as NaN
-        """
-        if preserve_nan:
-            valid_mask = ~np.isnan(elevation_data)
-            smoothed = elevation_data.copy()
-            
-            # Only smooth valid areas
-            valid_data = elevation_data[valid_mask]
-            if len(valid_data) > 0:
-                # Create temporary array for smoothing
-                temp_array = np.zeros_like(elevation_data)
-                temp_array[valid_mask] = valid_data
-                temp_array[~valid_mask] = np.mean(valid_data)  # Fill NaN with mean for smoothing
-                
-                # Apply smoothing
-                smoothed_temp = gaussian_filter(temp_array, sigma=sigma)
-                
-                # Restore only valid areas
-                smoothed[valid_mask] = smoothed_temp[valid_mask]
-        else:
-            smoothed = gaussian_filter(elevation_data, sigma=sigma)
-        
-        return smoothed

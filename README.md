@@ -1,32 +1,50 @@
 # Terrain-Following Mesh Generator for Atmospheric Simulations (OpenFOAM)
 
 This tool generates a **structured, terrain-following orthogonal mesh** for atmospheric simulations in [OpenFOAM](https://openfoam.org/).  
-It takes an input terrain surface and automatically produces a `blockMeshDict` that can be used directly with OpenFOAM’s `blockMesh` utility.
+It downloads terrain elevation data (DEM) and optional surface roughness maps, then produces a `blockMeshDict` and aerodynamic roughness field (`z0`) for high-fidelity wind flow simulations.
 
 ---
 
 ## Features
-- Creates a **graded, structured surface mesh** from input terrain, based on **user-defined resolution and grading scheme**.  
-- Extrudes the surface mesh up to a **user-specified ceiling height**.  
-- Supports **vertical grading** in the z-direction, controlled by user input.  
-- Outputs a ready-to-use `system/blockMeshDict` file.  
-- Designed for **atmospheric boundary layer and wind flow simulations**.  
+- **Automated DEM download** from global elevation datasets (GLO-30, SRTM, etc.)
+- **Automatic surface roughness mapping** from ESA WorldCover land classification
+- **UTM reprojection** at download time for optimal processing performance
+- **Structured, graded surface mesh** generation with user-defined resolution and grading
+- **Terrain-following vertical extrusion** to specified ceiling height
+- **Aerodynamic roughness field (`z0`) generation** for OpenFOAM ABL simulations
+- **Boundary treatment** to minimize artificial terrain edge effects
+- **Multi-block grading** support for refined regions of interest
+- **Batch processing** for multiple locations via CSV input
+- Outputs ready-to-use `system/blockMeshDict` and `0/include/z0Values` files
 
 ---
 
 ## Workflow
-1. **Input terrain** (e.g., DEM or structured point set).  
-2. Tool generates a **structured terrain mesh** (surface aligned with terrain, following user-specified grading and resolution).  
-3. Mesh is **extruded vertically** to ceiling height.  
-4. Vertical layers are **graded** based on user-specified z-grading.  
-5. Final mesh specification is exported as a `blockMeshDict`.  
-6. Run OpenFOAM’s `blockMesh` to generate the mesh.  
+
+### Phase 1: Download Terrain & Roughness Data
+1. Specify location(s) via **lat/lon coordinates** (single location or CSV batch)
+2. Tool **downloads DEM tiles** and **stitches** them into domain-sized GeoTIFF
+3. (Optional) Downloads **ESA WorldCover** land classification and converts to **z0 roughness values**
+4. **Reprojects** both DEM and roughness map to **UTM** (meters) for processing efficiency
+5. Saves **GeoTIFF files** and **metadata JSON** to location-specific folders
+
+### Phase 2: Generate Mesh
+1. Load **UTM-projected DEM** (and optional roughness map)
+2. **Extract and rotate** terrain region based on config
+3. Apply **boundary treatment** (smoothing/flattening at edges)
+4. Generate **structured terrain mesh** with specified resolution and grading
+5. **Extrude vertically** to ceiling height with z-grading
+6. Export `blockMeshDict` for OpenFOAM
+7. Map **z0 roughness values** to mesh faces for ABL simulations
+
+---
 
 ## Installation
 
 We recommend using a [Conda](https://docs.conda.io/projects/conda/en/latest/index.html) environment to manage dependencies.
 
 ### 1. Clone the repository
+
 ```bash
 git clone https://github.com/souravsud/terrain_following_mesh_generator.git
 cd terrain_following_mesh_generator
@@ -43,6 +61,11 @@ conda activate tfmesh
 
 Add the path to the DEM file in the run.py (dem_path) and the output directory-output_dir (preferebly the openFOAM case directory so that it will create the Dictionary file in the correct location). Setup all the required settings in the config.yaml file and then run the python code.
 
+If you have your own DEM files:
+- **GeoTIFF files**: Supported directly (will be reprojected to UTM if needed)
+- **DAT files**: Custom format with UTM coordinates (debug/testing)
+- **NetCDF files**: With 2D coordinate arrays (debug/testing)
+
 ```bash
 python run.py
 ```
@@ -56,10 +79,12 @@ python run.py
 |-----------|------|-------------|---------|
 | `center_lat` | float | Center latitude of terrain region | *required* |
 | `center_lon` | float | Center longitude of terrain region | *required* |
+| `center_coordinates` | tuple/null | Override with UTM coordinates `[x, y]` (for advanced use) | `null` |
 | `crop_size_km` | float | Size of terrain region to extract (km) | *required* |
-| `rotation_deg` | float | Rotation angle of domain (degrees, clockwise) | `0.0` |
+| `rotation_deg` | float | Rotation angle of domain (degrees, clockwise from North) | `0.0` |
 | `smoothing_sigma` | float | Gaussian smoothing applied to terrain (0=no smoothing) | `2.0` |
-| `center_coordinates` | bool | Center coordinates at origin | `false` |
+
+**Note**: If using downloaded GeoTIFFs, `center_coordinates` will be auto-loaded from metadata JSON.
 
 #### **Grid Section**
 | Parameter | Type | Description | Default |
