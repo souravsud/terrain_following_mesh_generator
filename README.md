@@ -3,6 +3,7 @@
 This tool generates a **structured, terrain-following orthogonal mesh** for atmospheric simulations in [OpenFOAM](https://openfoam.org/).  
 It downloads terrain elevation data (DEM) and optional surface roughness maps, then produces a `blockMeshDict` and aerodynamic roughness field (`z0`) for high-fidelity wind flow simulations.
 
+### PS: The circular O-grid mesh implementation is incomplete
 ---
 
 ## Features
