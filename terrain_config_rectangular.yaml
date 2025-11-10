@@ -1,19 +1,23 @@
 terrain:
   center_lat: 39.71121111
   center_lon: -7.73483333
-  crop_size_km: 30  # NOW: Diameter
-  domain_shape: 'circular'  # KEY CHANGE
+  crop_size_km: 30
+  rotation_deg: 15
   smoothing_sigma: 0
-  # rotation_deg not used for circular
-
-ogrid:  # REPLACES 'grid' section
-  nr: 200
-  n_sectors: 16
-  n_circumferential_per_sector: 20
-  aoi_cell_fraction: 0.4
-  radial_expansion_ratio: 20.0
-  subdivide_center: false
-
+  center_coordinates: false
+  
+grid:
+  nx: 361
+  ny: 361
+  x_grading:
+    - [0.35, 0.0835, 0.025]
+    - [0.30, 0.833, 1.0]
+    - [0.35, 0.0835, 40.0] 
+  y_grading:
+    - [0.35, 0.0835, 0.025]
+    - [0.30, 0.833, 1.0]
+    - [0.35, 0.0835, 40.0] 
+    
 mesh:
   domain_height: 3000.0
   total_z_cells: 66
@@ -21,16 +25,18 @@ mesh:
   z_grading:
     - [1.0, 1.0, 150]
 
+
 boundary:
   aoi_fraction: 0.3
-  boundary_mode: 'radial'  # MUST be radial for circular
+  boundary_mode: directional
   flat_boundary_thickness_fraction: 0.08
-  # enabled_boundaries not used for circular
+  enabled_boundaries: [east, west]
   smoothing_method: mean
   kernel_progression: exponential
   base_kernel_size: 4
   progression_rate: 36
-
+  boundary_flatness_mode: blend_target
+  
 visualization:
   create_plots: true
   show_grid_lines: true

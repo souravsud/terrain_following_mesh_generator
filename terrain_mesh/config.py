@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 import yaml
+from .ogrid_config import OGridConfig
+from pathlib import Path
 
 
 @dataclass
@@ -12,7 +14,8 @@ class TerrainConfig:
     center_lat: float
     center_lon: float
     crop_size_km: float
-    rotation_deg: float
+    domain_shape: str = 'rectangular'  #'rectangular' or 'circular'
+    rotation_deg: float = 0.0
     smoothing_sigma: float = 2.0
     center_coordinates: bool = False
 
@@ -59,7 +62,7 @@ class MeshConfig:
     
     # Z-direction configuration
     z_grading: Optional[List[Tuple[float, float, float]]] = None
-    total_z_cells: Optional[int] = None
+    total_z_cells: Optional[int] = 20
     terrain_normal_first_layer: bool = False
     
     patch_types: Optional[Dict[str, str]] = None
@@ -111,7 +114,7 @@ class BoundaryConfig:
     aoi_fraction: float = 0.4
 
     # Treatment mode
-    boundary_mode: str = "uniform"  # 'uniform' or 'directional'
+    boundary_mode: str = "directional"  # 'uniform' or 'directional'
 
     # Boundary sampling parameters
     flat_boundary_thickness_fraction: float = 0.1
@@ -146,48 +149,52 @@ class BoundaryConfig:
             self.flat_boundaries = ["north", "south", "east", "west"]
 
 
-def load_config(config_path: str) -> Dict[str, Any]:
+def load_config(config_path: str) -> dict:
     """
-    Load configuration from YAML file and return instantiated config objects.
-
-    Args:
-        config_path: Path to YAML configuration file
-
+    Load configuration from YAML file.
+    Automatically detects domain shape and loads appropriate configs.
+    
     Returns:
-        Dictionary with config object instances ready for pipeline.run(**configs)
+        dict with config objects (terrain_config, mesh_config, boundary_config, 
+        visualization_config, and either grid_config OR ogrid_config)
     """
-    with open(config_path, "r") as file:
-        config_data = yaml.safe_load(file) or {}
-
-    # Create config objects with defaults, override with YAML values
-    configs = {}
-
-    # Terrain configuration
-    terrain_data = config_data.get("terrain", {})
-    configs["terrain_config"] = TerrainConfig(**terrain_data)
-
-    # Grid configuration
-    grid_data = config_data.get("grid", {})
-    # Handle grading arrays - convert lists of lists to lists of tuples
-    if "x_grading" in grid_data:
-        grid_data["x_grading"] = [tuple(spec) for spec in grid_data["x_grading"]]
-    if "y_grading" in grid_data:
-        grid_data["y_grading"] = [tuple(spec) for spec in grid_data["y_grading"]]
-    configs["grid_config"] = GridConfig(**grid_data)
-
-    # Mesh configuration
-    mesh_data = config_data.get("mesh", {})
-    # Handle z_grading array - convert lists of lists to lists of tuples
-    if "z_grading" in mesh_data:
-        mesh_data["z_grading"] = [tuple(spec) for spec in mesh_data["z_grading"]]
-    configs["mesh_config"] = MeshConfig(**mesh_data)
-
-    # Boundary configuration
-    boundary_data = config_data.get("boundary", {})
-    configs["boundary_config"] = BoundaryConfig(**boundary_data)
-
-    # Visualization configuration
-    viz_data = config_data.get("visualization", {})
-    configs["visualization_config"] = VisualizationConfig(**viz_data)
-
-    return configs
+    
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config_dict = yaml.safe_load(f)
+    
+    # Create terrain config
+    terrain_config = TerrainConfig(**config_dict['terrain'])
+    
+    # Detect domain shape and create appropriate grid config
+    domain_shape = config_dict['terrain'].get('domain_shape', 'rectangular')
+    
+    if domain_shape == 'circular':
+        # Load O-grid config
+        from .ogrid_config import OGridConfig
+        ogrid_config = OGridConfig(**config_dict['ogrid'])
+        grid_config = None
+        print(f"Loaded circular domain configuration with {ogrid_config.n_sectors} sectors")
+    else:
+        # Load rectangular grid config
+        grid_config = GridConfig(**config_dict['grid'])
+        ogrid_config = None
+        print(f"Loaded rectangular domain configuration ({grid_config.nx}x{grid_config.ny})")
+    
+    # Load other configs (same for both domain types)
+    mesh_config = MeshConfig(**config_dict['mesh'])
+    boundary_config = BoundaryConfig(**config_dict['boundary'])
+    visualization_config = VisualizationConfig(**config_dict.get('visualization', {}))
+    
+    # Return all configs
+    return {
+        'terrain_config': terrain_config,
+        'grid_config': grid_config,        # None for circular
+        'ogrid_config': ogrid_config,      # None for rectangular
+        'mesh_config': mesh_config,
+        'boundary_config': boundary_config,
+        'visualization_config': visualization_config
+    }

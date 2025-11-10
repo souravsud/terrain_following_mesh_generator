@@ -84,6 +84,171 @@ class TerrainProcessor:
         
         return roughness_data, transform
     
+    def extract_circular_terrain(self, dem_path: str, config: TerrainConfig):
+        """
+        Extract circular terrain crop using TerrainConfig.
+        Similar to extract_rotated_terrain but creates circular crop.
+        
+        Args:
+            dem_path: Path to DEM file
+            config: TerrainConfig with domain_shape='circular'
+        
+        Returns:
+            Tuple of (elevation_data, transform, crs, pixel_res, crop_mask, center_utm)
+        """
+        # Get center coordinates
+        if config.center_coordinates:
+            center_utm = config.center_coordinates
+        else:
+            metadata_path = Path(dem_path).with_suffix('.json')
+            if metadata_path.exists():
+                import json
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+                    center_utm = tuple(metadata['center_utm'])
+                    print(f"Loaded center UTM from metadata: {center_utm}")
+            else:
+                print("Warning: No metadata found. Converting lat/lon to UTM...")
+                utm_crs = self.get_utm_crs(config.center_lon, config.center_lat)
+                center_utm = self.latlon_to_utm(config.center_lat, config.center_lon, utm_crs)
+        
+        self.centre_utm = center_utm
+        
+        # Crop using circular mask
+        elevation_data, transform, crs, pixel_res, crop_mask = self._crop_circular_raster(
+            raster_path=dem_path,
+            center_utm=center_utm,
+            diameter_km=config.crop_size_km
+        )
+        
+        self.original_crs = crs
+        
+        # Apply smoothing if specified
+        if config.smoothing_sigma > 0:
+            from utils import smooth_terrain_for_cfd
+            elevation_data = smooth_terrain_for_cfd(
+                elevation_data, 
+                sigma=config.smoothing_sigma
+            )
+        
+        return elevation_data, transform, crs, pixel_res, crop_mask, center_utm
+
+
+    def _crop_circular_raster(self, 
+                            raster_path: Union[str, Path],
+                            center_utm: Tuple[float, float],
+                            diameter_km: float) -> tuple:
+        """
+        Crop raster to circular domain.
+        
+        Args:
+            raster_path: Path to raster file
+            center_utm: (x, y) UTM coordinates of center
+            diameter_km: Circle diameter in kilometers
+        
+        Returns:
+            (cropped_data, transform, crs, resolution, crop_mask)
+        """
+        raster_path = Path(raster_path)
+        suffix = raster_path.suffix.lower()
+        
+        print(f"Processing {suffix} file for circular crop: {raster_path.name}")
+        
+        radius_m = (diameter_km * 1000) / 2
+        
+        # Format-specific adaptation
+        if suffix == '.dat':
+            memfile = self._adapt_dat_to_rasterio(raster_path)
+            with memfile.open() as src:
+                return self._crop_raster_circular_core(src, center_utm, radius_m)
+        
+        elif suffix == '.nc':
+            memfile = self._adapt_netcdf_to_rasterio(raster_path)
+            with memfile.open() as src:
+                return self._crop_raster_circular_core(src, center_utm, radius_m)
+        
+        elif suffix in ['.tif', '.tiff']:
+            with rasterio.open(str(raster_path)) as src:
+                return self._crop_raster_circular_core(src, center_utm, radius_m)
+        
+        else:
+            raise ValueError(f"Unsupported raster format: {suffix}")
+
+
+    def _crop_raster_circular_core(self, src, center_utm, radius_m):
+        """
+        Core circular cropping logic.
+        
+        Args:
+            src: Open rasterio DatasetReader
+            center_utm: (x, y) tuple in UTM coordinates
+            radius_m: Circle radius in meters
+        
+        Returns:
+            (cropped_data, transform, crs, resolution, crop_mask)
+        """
+        center_utm_x, center_utm_y = center_utm
+        
+        # Calculate bounding box (square containing circle)
+        buffer_size = radius_m
+        expanded_bounds = [
+            center_utm_x - buffer_size,  # left
+            center_utm_y - buffer_size,  # bottom
+            center_utm_x + buffer_size,  # right
+            center_utm_y + buffer_size   # top
+        ]
+        
+        self.expanded_bounds = expanded_bounds
+        
+        print(f"Circular crop bounds (UTM): {expanded_bounds}")
+        print(f"Circle radius: {radius_m:.1f} m")
+        
+        # Convert to pixel coordinates
+        left_px = int((expanded_bounds[0] - src.bounds.left) / src.res[0])
+        right_px = int((expanded_bounds[2] - src.bounds.left) / src.res[0])
+        bottom_px = int((src.bounds.top - expanded_bounds[3]) / src.res[1])
+        top_px = int((src.bounds.top - expanded_bounds[1]) / src.res[1])
+        
+        # Clamp to bounds
+        left_px = max(0, left_px)
+        right_px = min(src.width, right_px)
+        bottom_px = max(0, bottom_px)
+        top_px = min(src.height, top_px)
+        
+        print(f"Pixel window: ({left_px}, {bottom_px}, {right_px}, {top_px})")
+        
+        # Extract window
+        window = rasterio.windows.Window.from_slices(
+            (bottom_px, top_px), (left_px, right_px)
+        )
+        expanded_data = src.read(1, window=window)
+        
+        if expanded_data.size == 0:
+            raise ValueError("Crop area is outside raster bounds")
+        
+        # Calculate transform for extracted region
+        expanded_transform = rasterio.windows.transform(window, src.transform)
+        
+        # Create coordinate grids
+        nrows, ncols = expanded_data.shape
+        x_coords = np.arange(ncols) * src.res[0] + expanded_transform.c
+        y_coords = np.arange(nrows) * (-src.res[1]) + expanded_transform.f
+        x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+        
+        # Create circular mask
+        print(f"Creating circular crop mask (radius: {radius_m:.1f} m)...")
+        distances = np.sqrt((x_grid - center_utm_x)**2 + (y_grid - center_utm_y)**2)
+        crop_mask = distances <= radius_m
+        
+        # Apply mask
+        cropped_data = expanded_data.copy()
+        cropped_data[~crop_mask] = np.nan
+        
+        print(f"Circular crop completed. Valid pixels: {np.sum(crop_mask)} / {crop_mask.size}")
+        print(f"Circle fill: {100 * np.sum(crop_mask) / crop_mask.size:.1f}%")
+        
+        return cropped_data, expanded_transform, src.crs, src.res, crop_mask
+
     def crop_and_rotate_raster(self, 
                            raster_path: Union[str, Path],
                            center_utm: Tuple[float, float],

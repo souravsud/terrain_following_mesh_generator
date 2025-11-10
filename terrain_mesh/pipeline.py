@@ -8,6 +8,8 @@ from .boundary_treatment import BoundaryTreatment
 from .grid_generator import StructuredGridGenerator
 from .visualizer import TerrainVisualizer
 from .blockmesh_generator import BlockMeshGenerator
+from .ogrid_pipeline import OGridPipeline
+from .ogrid_config import OGridConfig
 
 class TerrainMeshPipeline:
     """Main pipeline orchestrating the entire terrain-to-mesh process"""
@@ -22,8 +24,9 @@ class TerrainMeshPipeline:
     
     def run(self, 
            dem_path: Union[str, Path],
-           terrain_config: TerrainConfig, 
-           grid_config: GridConfig,
+           terrain_config: TerrainConfig,
+           grid_config: Optional[GridConfig] = None,
+           ogrid_config: Optional[OGridConfig] = None,
            mesh_config: Optional[MeshConfig] = None,
            boundary_config: Optional[BoundaryConfig] = None,
            visualization_config: Optional[VisualizationConfig] = None,
@@ -33,6 +36,33 @@ class TerrainMeshPipeline:
            save_metadata: bool = True) -> Dict:
         """Run the complete terrain-to-mesh pipeline"""
         
+        if terrain_config.domain_shape == 'circular':
+            print("Detected circular domain - routing to O-Grid pipeline...")
+            
+            if ogrid_config is None:
+                raise ValueError("ogrid_config must be provided for circular domains")
+            
+            # Route to O-grid pipeline
+            ogrid_pipeline = OGridPipeline()
+            return ogrid_pipeline.run(
+                dem_path=dem_path,
+                terrain_config=terrain_config,
+                ogrid_config=ogrid_config,
+                mesh_config=mesh_config or MeshConfig(),
+                boundary_config=boundary_config or BoundaryConfig(),
+                visualization_config=visualization_config or VisualizationConfig(),
+                rmap_path=rmap_path,
+                output_dir=output_dir,
+                create_blockmesh=create_blockmesh,
+                save_metadata=save_metadata
+            )
+        
+        elif terrain_config.domain_shape == 'rectangular':
+            print("Detected rectangular domain - using standard pipeline...")
+            
+            if grid_config is None:
+                raise ValueError("grid_config must be provided for rectangular domains")
+            
         # Setup configs and output directory
         mesh_config = mesh_config or MeshConfig()
         boundary_config = boundary_config or BoundaryConfig()
