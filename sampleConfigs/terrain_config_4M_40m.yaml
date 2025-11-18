@@ -7,24 +7,22 @@ terrain:
   center_coordinates: false
   
 grid:
-  nx: 395
-  ny: 395
+  nx: 271
+  ny: 271
   x_grading:
-    - [0.35,0.12,0.05]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0] 
+    - [0.35, 0.0849, 0.025]
+    - [0.30, 0.8302, 1.0]
+    - [0.35, 0.0849, 40.0]
   y_grading:
-    - [0.35,0.12,0.05]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0] 
+    - [0.35, 0.0849, 0.025]
+    - [0.30, 0.8302, 1.0]
+    - [0.35, 0.0849, 40.0]
     
 mesh:
   domain_height: 3000.0
-  total_z_cells: 91
-  terrain_normal_first_layer: true
+  total_z_cells: 60
   z_grading:
-    - [1.0, 1.0, 62.4]
-
+    - [1.0, 1.0, 200]
 
 boundary:
   aoi_fraction: 0.3
