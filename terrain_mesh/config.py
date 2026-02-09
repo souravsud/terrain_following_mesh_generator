@@ -61,6 +61,7 @@ class MeshConfig:
     z_grading: Optional[List[Tuple[float, float, float]]] = None
     total_z_cells: Optional[int] = None
     terrain_normal_first_layer: bool = False
+    normalise_z: bool = False
     
     patch_types: Optional[Dict[str, str]] = None
     extract_inlet_face_info: bool = True

@@ -335,3 +335,12 @@ class TerrainProcessor:
         
         mask = ((np.abs(rotated_x) <= half_size) & (np.abs(rotated_y) <= half_size))
         return mask
+    
+    def normalize_terrain(self, elevation_data):
+        """
+        Normalise terrain elevation by setting lowest point to zero
+        """
+        min_elevation = np.nanmin(elevation_data)
+        elevation_data = elevation_data - min_elevation
+        return elevation_data, min_elevation
+    

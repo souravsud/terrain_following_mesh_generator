@@ -100,6 +100,8 @@ def write_metadata(**kwargs):
             
             "mesh": {
                 "domain_height": kwargs['mesh_config'].domain_height,
+                "z_offset": kwargs['min_elevation'],
+                "terrain_normal_first_layer": kwargs['mesh_config'].terrain_normal_first_layer,
                 "total_z_cells": kwargs['mesh_config'].total_z_cells,
                 "z_grading": kwargs['mesh_config'].z_grading,
                 "patch_types": kwargs['mesh_config'].patch_types

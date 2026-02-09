@@ -248,7 +248,7 @@ class BlockMeshGenerator:
                 f.write("FoamFile\n{\n    version     2.0;\n    format      ascii;\n")
                 f.write("    class       dictionary;\n    object      blockMeshDict;\n}\n")
                 f.write("// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n")
-                f.write("convertToMeters 1;\n\n")
+                f.write("scale 1;\n\n")
 
                 # Vertices (only valid ones)
                 f.write("vertices\n(\n")
