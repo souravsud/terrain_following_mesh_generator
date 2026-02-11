@@ -62,8 +62,9 @@ class TerrainProcessor:
                 elevation_data, 
                 sigma=config.smoothing_sigma
             )
+        min_elevation = np.nanmin(elevation_data)
         
-        return elevation_data, transform, crs, pixel_res, crop_mask, center_utm
+        return elevation_data, min_elevation, transform, crs, pixel_res, crop_mask, center_utm
 
     def extract_rotated_rmap(self, rmap_path: str, config: TerrainConfig) -> Tuple[np.ndarray, object]:
         """
@@ -335,12 +336,3 @@ class TerrainProcessor:
         
         mask = ((np.abs(rotated_x) <= half_size) & (np.abs(rotated_y) <= half_size))
         return mask
-    
-    def normalize_terrain(self, elevation_data):
-        """
-        Normalise terrain elevation by setting lowest point to zero
-        """
-        min_elevation = np.nanmin(elevation_data)
-        elevation_data = elevation_data - min_elevation
-        return elevation_data, min_elevation
-    

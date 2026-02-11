@@ -51,7 +51,7 @@ class TerrainMeshPipeline:
         
         # Step 1: Extract terrain and roughness data
         print("\n[1a/6] Extracting terrain elevation...")
-        elevation_data, transform, crs, pixel_res, crop_mask, centre_utm = \
+        elevation_data, min_elevation, transform, crs, pixel_res, crop_mask, centre_utm = \
             self.processor.extract_rotated_terrain(dem_path, terrain_config)
             
         roughness_data, roughness_transform = None, None
@@ -60,18 +60,16 @@ class TerrainMeshPipeline:
             roughness_data, roughness_transform = \
                 self.processor.extract_rotated_rmap(rmap_path, terrain_config)
         
-        if mesh_config.normalise_z:
-            print("\n[1c/6] Normalising terrain elevation...")
-            elevation_data_norm, min_elevation = self.processor.normalize_terrain(elevation_data)
-        else:
-            elevation_data_norm = elevation_data
-            min_elevation = 0.0
+        if mesh_config.adjust_ceiling_for_terrain and min_elevation > 0.0:
+            print("\n[1c/6] Adjusting terrain elevation...")
+            mesh_config.domain_height = mesh_config.domain_height + min_elevation
+
         
         # Step 2: Apply boundary treatment
         print("\n[2/6] Applying boundary treatment...")
         treated_elevation, boundary_elevations, treated_mask, zones = \
             self.boundary_treatment.process_boundaries(
-                elevation_data_norm, crop_mask, boundary_config, terrain_config.rotation_deg
+                elevation_data, crop_mask, boundary_config, terrain_config.rotation_deg
             )
         
         # Step 3: Generate structured grid
