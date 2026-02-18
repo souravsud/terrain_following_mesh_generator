@@ -1,4 +1,46 @@
-backup/
-*.vtk
-mesh_output/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 **/__pycache__/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Output files
+backup/
+mesh_output/
+terrain_mesh_output/
+*.vtk
+*.tif
+*.tiff
+*.dat
+downloads/
+output/
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# OpenFOAM files (in output directories)
+**/system/blockMeshDict
+**/0/include/z0Values
+**/0/include/inletFaceInfo.txt

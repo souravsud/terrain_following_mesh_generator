@@ -1,29 +1,75 @@
-"""Configuration classes for terrain mesh generation"""
+"""Configuration classes for terrain mesh generation.
+
+This module provides dataclass-based configuration for:
+- Terrain extraction and processing
+- Grid generation with multi-block grading
+- OpenFOAM mesh output
+- Boundary treatment and smoothing
+- Visualization options
+"""
 
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 import yaml
 
+# Constants
+DEFAULT_SMOOTHING_SIGMA = 2.0
+MIN_GRID_DIMENSION = 2
+GRADING_TOLERANCE = 1e-6
+DEFAULT_DOMAIN_HEIGHT = 4000.0
+DEFAULT_Z_CELLS = 10
+DEFAULT_AOI_FRACTION = 0.4
+DEFAULT_FLAT_BOUNDARY_THICKNESS = 0.1
+DEFAULT_PROGRESSION_RATE = 1.5
+DEFAULT_PLOT_DPI = 150
+
 
 @dataclass
 class TerrainConfig:
-    """Configuration for terrain processing"""
+    """Configuration for terrain extraction and processing.
+    
+    Attributes:
+        center_lat: Center latitude of terrain region (decimal degrees)
+        center_lon: Center longitude of terrain region (decimal degrees)
+        crop_size_km: Size of terrain region to extract (kilometers)
+        rotation_deg: Rotation angle clockwise from North (degrees, 0-360)
+        smoothing_sigma: Gaussian smoothing sigma (0 = no smoothing)
+        center_coordinates: If True, use UTM coordinates from metadata instead of lat/lon
+        
+    Raises:
+        ValueError: If crop_size_km is not positive
+    """
 
     center_lat: float
     center_lon: float
     crop_size_km: float
     rotation_deg: float
-    smoothing_sigma: float = 2.0
+    smoothing_sigma: float = DEFAULT_SMOOTHING_SIGMA
     center_coordinates: bool = False
 
     def __post_init__(self):
         if self.crop_size_km <= 0:
-            raise ValueError("Crop size must be positive")
+            raise ValueError(f"Crop size must be positive, got {self.crop_size_km}")
 
 
 @dataclass
 class GridConfig:
-    """Configuration for grid generation"""
+    """Configuration for structured grid generation.
+    
+    Attributes:
+        nx: Number of cells in x-direction (minimum 2)
+        ny: Number of cells in y-direction (minimum 2)
+        x_grading: Optional multi-block grading for x-direction.
+                  Format: [(length_fraction, cell_fraction, expansion_ratio), ...]
+                  All fractions must sum to 1.0
+        y_grading: Optional multi-block grading for y-direction.
+                  Format: [(length_fraction, cell_fraction, expansion_ratio), ...]
+                  All fractions must sum to 1.0
+                  
+    Raises:
+        ValueError: If grid dimensions are less than 2x2
+        ValueError: If grading fractions don't sum to 1.0
+    """
 
     nx: int
     ny: int
@@ -31,8 +77,11 @@ class GridConfig:
     y_grading: Optional[List[Tuple[float, float, float]]] = None
 
     def __post_init__(self):
-        if self.nx < 2 or self.ny < 2:
-            raise ValueError("Grid dimensions must be at least 2x2")
+        if self.nx < MIN_GRID_DIMENSION or self.ny < MIN_GRID_DIMENSION:
+            raise ValueError(
+                f"Grid dimensions must be at least {MIN_GRID_DIMENSION}x{MIN_GRID_DIMENSION}, "
+                f"got {self.nx}x{self.ny}"
+            )
 
         if self.x_grading:
             self._validate_grading(self.x_grading, "x_grading")
@@ -40,22 +89,47 @@ class GridConfig:
             self._validate_grading(self.y_grading, "y_grading")
 
     @staticmethod
-    def _validate_grading(grading: List[Tuple[float, float, float]], name: str):
+    def _validate_grading(grading: List[Tuple[float, float, float]], name: str) -> None:
+        """Validate that grading fractions sum to 1.0.
+        
+        Args:
+            grading: List of (length_fraction, cell_fraction, expansion_ratio) tuples
+            name: Name of the grading parameter for error messages
+            
+        Raises:
+            ValueError: If fractions don't sum to 1.0 within tolerance
+        """
         length_sum = sum(spec[0] for spec in grading)
         cell_sum = sum(spec[1] for spec in grading)
 
-        if abs(length_sum - 1.0) > 1e-6:
+        if abs(length_sum - 1.0) > GRADING_TOLERANCE:
             raise ValueError(
                 f"{name} length fractions must sum to 1.0, got {length_sum}"
             )
-        if abs(cell_sum - 1.0) > 1e-6:
-            raise ValueError(f"{name} cell fractions must sum to 1.0, got {cell_sum}")
+        if abs(cell_sum - 1.0) > GRADING_TOLERANCE:
+            raise ValueError(
+                f"{name} cell fractions must sum to 1.0, got {cell_sum}"
+            )
 
 
 @dataclass
 class MeshConfig:
-    """Configuration for OpenFOAM mesh generation"""
-    domain_height: float = 4000.0
+    """Configuration for OpenFOAM mesh generation and vertical extrusion.
+    
+    Attributes:
+        domain_height: Height of computational domain in meters
+        z_grading: Optional vertical grading specification.
+                  Format: [(length_fraction, cell_fraction, expansion_ratio), ...]
+        total_z_cells: Number of cells in vertical direction
+        terrain_normal_first_layer: If True, first layer follows terrain normal
+        patch_types: Dictionary mapping boundary names to OpenFOAM patch types.
+                    Defaults: ground=wall, sky=patch, inlet=patch, outlet=patch, sides=patch
+        extract_inlet_face_info: If True, extract inlet face information for ABL setup
+        
+    Raises:
+        ValueError: If z_grading fractions don't sum to 1.0
+    """
+    domain_height: float = DEFAULT_DOMAIN_HEIGHT
     
     # Z-direction configuration
     z_grading: Optional[List[Tuple[float, float, float]]] = None
@@ -80,41 +154,79 @@ class MeshConfig:
             self._validate_z_grading()
         
     
-    def _validate_z_grading(self):
-        """Validate z-direction grading specification"""
+    def _validate_z_grading(self) -> None:
+        """Validate z-direction grading specification.
+        
+        Raises:
+            ValueError: If fractions don't sum to 1.0 within tolerance
+        """
         length_sum = sum(spec[0] for spec in self.z_grading)
         cell_sum = sum(spec[1] for spec in self.z_grading)
 
-        if abs(length_sum - 1.0) > 1e-6:
+        if abs(length_sum - 1.0) > GRADING_TOLERANCE:
             raise ValueError(
                 f"z_grading length fractions must sum to 1.0, got {length_sum}"
             )
-        if abs(cell_sum - 1.0) > 1e-6:
-            raise ValueError(f"z_grading cell fractions must sum to 1.0, got {cell_sum}")
+        if abs(cell_sum - 1.0) > GRADING_TOLERANCE:
+            raise ValueError(
+                f"z_grading cell fractions must sum to 1.0, got {cell_sum}"
+            )
 
 @dataclass
 class VisualizationConfig:
-    """Configuration for visualization options"""
+    """Configuration for mesh visualization and plotting.
+    
+    Attributes:
+        create_plots: If True, generate visualization plots
+        show_grid_lines: If True, display grid lines on plots
+        save_high_res: If True, save high-resolution versions of plots
+        plot_format: Output format for plots ('png', 'pdf', 'svg')
+        dpi: Resolution in dots per inch for raster formats
+    """
 
     create_plots: bool = True
     show_grid_lines: bool = True
     save_high_res: bool = True
     plot_format: str = "png"
-    dpi: int = 150
+    dpi: int = DEFAULT_PLOT_DPI
 
 
 @dataclass
 class BoundaryConfig:
-    """Configuration for boundary treatment with progressive smoothing"""
+    """Configuration for boundary treatment with progressive smoothing.
+    
+    This configuration controls the 4-zone boundary treatment:
+    - Area of Interest (AOI): Central region with original terrain
+    - Transition Zone: Progressive smoothing from AOI to boundary
+    - Blend Zone: Smooth blending to target elevation
+    - Flat Zone: Constant elevation at boundary
+    
+    Attributes:
+        aoi_fraction: Fraction of domain considered as AOI (0-1)
+        boundary_mode: Treatment mode - 'uniform' (all sides) or 'directional' (selected sides)
+        flat_boundary_thickness_fraction: Thickness of flat boundary region (0-1)
+        enabled_boundaries: List of boundaries to treat: ['east', 'west', 'north', 'south']
+        smoothing_method: Smoothing kernel type - 'mean', 'gaussian', or 'median'
+        kernel_progression: How smoothing increases - 'exponential' or 'linear'
+        base_kernel_size: Initial smoothing kernel size (auto-calculated if None)
+        max_kernel_size: Maximum smoothing kernel size (auto-calculated if None)
+        progression_rate: Rate of kernel size increase (for exponential progression)
+        boundary_flatness_mode: Flattening method - 'heavy_smooth' or 'blend_target'
+        uniform_elevation: Override boundary height in meters (auto-calculated if None)
+        
+    Raises:
+        ValueError: If aoi_fraction or flat_boundary_thickness_fraction is not in (0, 1)
+        ValueError: If progression_rate is not > 1
+    """
 
     # Zone definition
-    aoi_fraction: float = 0.4
+    aoi_fraction: float = DEFAULT_AOI_FRACTION
 
     # Treatment mode
     boundary_mode: str = "uniform"  # 'uniform' or 'directional'
 
     # Boundary sampling parameters
-    flat_boundary_thickness_fraction: float = 0.1
+    flat_boundary_thickness_fraction: float = DEFAULT_FLAT_BOUNDARY_THICKNESS
     enabled_boundaries: List[str] = None  # For directional mode ['east', 'west']
 
     # Progressive smoothing parameters
@@ -122,7 +234,7 @@ class BoundaryConfig:
     kernel_progression: str = "exponential"  # 'exponential', 'linear'
     base_kernel_size: int = None
     max_kernel_size: int = None
-    progression_rate: float = 1.5  # For exponential progression
+    progression_rate: float = DEFAULT_PROGRESSION_RATE  # For exponential progression
 
     # Boundary flatness treatment
     boundary_flatness_mode: str = "heavy_smooth"  # 'heavy_smooth', 'blend_target'
@@ -147,14 +259,27 @@ class BoundaryConfig:
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
-    """
-    Load configuration from YAML file and return instantiated config objects.
-
+    """Load configuration from YAML file and return instantiated config objects.
+    
+    This function reads a YAML configuration file and creates typed configuration
+    objects for all components of the terrain mesh generation pipeline.
+    
     Args:
         config_path: Path to YAML configuration file
-
+        
     Returns:
-        Dictionary with config object instances ready for pipeline.run(**configs)
+        Dictionary with config object instances ready for pipeline.run(**configs).
+        Keys: terrain_config, grid_config, mesh_config, boundary_config, visualization_config
+        
+    Raises:
+        FileNotFoundError: If config_path doesn't exist
+        yaml.YAMLError: If YAML file is malformed
+        ValueError: If configuration values are invalid
+        
+    Example:
+        >>> configs = load_config("terrain_config.yaml")
+        >>> pipeline = TerrainMeshPipeline()
+        >>> results = pipeline.run(dem_path="terrain.tif", output_dir="output", **configs)
     """
     with open(config_path, "r") as file:
         config_data = yaml.safe_load(file) or {}
