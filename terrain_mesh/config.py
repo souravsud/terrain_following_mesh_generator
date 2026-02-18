@@ -13,9 +13,9 @@ from typing import Optional, List, Tuple, Dict, Any
 import yaml
 
 # Constants
-DEFAULT_SMOOTHING_SIGMA = 2.0
+DEFAULT_GAUSSIAN_SMOOTHING_SIGMA = 2.0  # Default sigma for Gaussian terrain smoothing
 MIN_GRID_DIMENSION = 2
-GRADING_TOLERANCE = 1e-6
+GRADING_TOLERANCE = 1e-6  # Tolerance for floating-point comparison in grading validation
 DEFAULT_DOMAIN_HEIGHT = 4000.0
 DEFAULT_Z_CELLS = 10
 DEFAULT_AOI_FRACTION = 0.4
@@ -44,7 +44,7 @@ class TerrainConfig:
     center_lon: float
     crop_size_km: float
     rotation_deg: float
-    smoothing_sigma: float = DEFAULT_SMOOTHING_SIGMA
+    smoothing_sigma: float = DEFAULT_GAUSSIAN_SMOOTHING_SIGMA
     center_coordinates: bool = False
 
     def __post_init__(self):

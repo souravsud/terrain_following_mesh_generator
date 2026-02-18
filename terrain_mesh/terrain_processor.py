@@ -20,7 +20,7 @@ import warnings
 warnings.filterwarnings('ignore', category=rasterio.errors.NotGeoreferencedWarning)
 
 # Constants
-SQRT_2 = np.sqrt(2)  # Square root of 2 for rotation buffer calculation
+SQRT_2 = 1.4142135623730951  # Square root of 2 for rotation buffer calculation
 NODATA_VALUE = -9999  # Standard no-data value for DAT files
 UTM_ZONE_WIDTH = 6  # Width of UTM zones in degrees
 WGS84_EPSG = 4326  # EPSG code for WGS84 coordinate system

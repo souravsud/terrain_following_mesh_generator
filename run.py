@@ -4,7 +4,7 @@ This script provides a simple interface to run the complete mesh generation
 pipeline using configuration from a YAML file.
 
 Usage:
-    python run.py --config terrain_config.yaml --dem path/to/dem.tif --output ./output
+    python run.py --config terrain_config.yaml --dem terrain_data.tif --output ./output
     
 For help:
     python run.py --help
@@ -114,10 +114,10 @@ def main():
         sys.exit(1)
     
     # Determine paths (command line overrides hardcoded defaults)
-    # TODO: Update these default paths for your system
-    default_dem_path = "/Users/ssudhakaran/Documents/Simulations/2025/generateInputs/Data_test/downloads/terrain_0001_N39_711_W007_735/terrain_0001_glo_30_N39_711_W007_735_50km.tif"
-    default_rmap_path = "/Users/ssudhakaran/Documents/Simulations/2025/generateInputs/Data_test/downloads/terrain_0001_N39_711_W007_735/roughness_0001_worldcover_N39_711_W007_735_50km.tif"
-    default_output_dir = "/Users/ssudhakaran/Documents/Simulations/API/openFoam/meshRefine"
+    # NOTE: Update these paths for your environment or use command-line arguments
+    default_dem_path = "path/to/terrain.tif"
+    default_rmap_path = "path/to/roughness.tif"
+    default_output_dir = "./output"
     
     dem_path = args.dem if args.dem else default_dem_path
     rmap_path = args.rmap if args.rmap else default_rmap_path

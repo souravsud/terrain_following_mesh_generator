@@ -15,19 +15,27 @@ Main Components:
 
 Basic Usage:
     >>> import terrain_mesh as tm
+    >>> from pathlib import Path
     >>> 
-    >>> # Load configuration
-    >>> configs = tm.load_config("config.yaml")
+    >>> # Verify files exist
+    >>> config_file = Path("config.yaml")
+    >>> dem_file = Path("terrain.tif")
+    >>> if not config_file.exists() or not dem_file.exists():
+    ...     raise FileNotFoundError("Required files not found")
     >>> 
-    >>> # Run pipeline
+    >>> # Load configuration and run pipeline
+    >>> configs = tm.load_config(str(config_file))
     >>> pipeline = tm.TerrainMeshPipeline()
-    >>> results = pipeline.run(
-    ...     dem_path="terrain.tif",
-    ...     output_dir="output",
-    ...     **configs
-    ... )
+    >>> try:
+    ...     results = pipeline.run(
+    ...         dem_path=str(dem_file),
+    ...         output_dir="output",
+    ...         **configs
+    ...     )
+    ... except Exception as e:
+    ...     print(f"Pipeline failed: {e}")
 
-For more information, see the README.md file.
+For more information, see the README.md file or examples/ directory.
 """
 
 from .config import (
