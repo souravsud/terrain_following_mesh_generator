@@ -59,16 +59,49 @@ conda activate tfmesh
 
 ## Usage
 
-Add the path to the DEM file in the run.py (dem_path) and the output directory-output_dir (preferebly the openFOAM case directory so that it will create the Dictionary file in the correct location). Setup all the required settings in the config.yaml file and then run the python code.
+### Quick Start
+
+The simplest way to use the tool is with the command-line interface:
+
+```bash
+# Show help and available options
+python run.py --help
+
+# Run with default config and custom paths
+python run.py --config terrain_config.yaml --dem terrain_data.tif --output ./output
+
+# Include roughness map for z0 field generation
+python run.py --dem terrain.tif --rmap roughness.tif --output ./output
+
+# Enable verbose logging for debugging
+python run.py --verbose
+```
+
+### Advanced Usage
+
+For programmatic usage, see the examples in the `examples/` directory:
+- `examples/simple_example.py` - Basic usage with uniform mesh
+- `examples/advanced_example.py` - Advanced usage with grading and boundary treatment
+
+### Using Your Own DEM Files
 
 If you have your own DEM files:
 - **GeoTIFF files**: Supported directly (will be reprojected to UTM if needed)
 - **DAT files**: Custom format with UTM coordinates (debug/testing)
 - **NetCDF files**: With 2D coordinate arrays (debug/testing)
 
+Then run:
+
 ```bash
-python run.py
+python run.py --config terrain_config.yaml --dem your_terrain.tif --output ./output
 ```
+
+## Examples
+
+See the `examples/` directory for ready-to-use example scripts:
+- `simple_example.py` - Generate a uniform mesh
+- `advanced_example.py` - Use multi-block grading and boundary treatment
+- `README.md` - Guidelines and tips for mesh generation
 
 ## Configuration
 
