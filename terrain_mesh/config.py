@@ -34,7 +34,7 @@ class TerrainConfig:
         crop_size_km: Size of terrain region to extract (kilometers)
         rotation_deg: Rotation angle clockwise from North (degrees, 0-360)
         smoothing_sigma: Gaussian smoothing sigma (0 = no smoothing)
-        center_coordinates: If True, use UTM coordinates from metadata instead of lat/lon
+        center_coordinates: If True, the coordinate system is transformed such that the centre is (0,0)
         
     Raises:
         ValueError: If crop_size_km is not positive
