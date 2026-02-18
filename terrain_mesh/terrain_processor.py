@@ -1,3 +1,9 @@
+"""Terrain data extraction and processing module.
+
+This module handles extraction and preprocessing of Digital Elevation Model (DEM)
+data from various formats (GeoTIFF, DAT, NetCDF) with support for rotation,
+cropping, and coordinate transformations.
+"""
 from .config import TerrainConfig
 from .utils import rotate_coordinates,smooth_terrain_for_cfd
 from typing import Union, Tuple
@@ -13,17 +19,63 @@ import warnings
 
 warnings.filterwarnings('ignore', category=rasterio.errors.NotGeoreferencedWarning)
 
+# Constants
+SQRT_2 = np.sqrt(2)  # Square root of 2 for rotation buffer calculation
+NODATA_VALUE = -9999  # Standard no-data value for DAT files
+UTM_ZONE_WIDTH = 6  # Width of UTM zones in degrees
+WGS84_EPSG = 4326  # EPSG code for WGS84 coordinate system
+UTM_NORTH_BASE = 32600  # Base EPSG for northern hemisphere UTM zones
+UTM_SOUTH_BASE = 32700  # Base EPSG for southern hemisphere UTM zones
+
+
 class TerrainProcessor:
+    """Process and extract terrain elevation data from various raster formats.
+    
+    This class handles:
+    - Loading DEM data from GeoTIFF, DAT, and NetCDF formats
+    - Cropping terrain to specified region
+    - Rotating terrain by specified angle
+    - Coordinate transformations (lat/lon to UTM)
+    - Terrain smoothing for CFD applications
+    
+    Attributes:
+        centre_utm: UTM coordinates of terrain center (x, y)
+        original_crs: Original coordinate reference system of input data
+        expanded_bounds: Bounds of expanded region for rotation [left, bottom, right, top]
+    """
     
     def __init__(self):
         self.centre_utm = None
         self.original_crs = None
         self.expanded_bounds = None
     
-    def extract_rotated_terrain(self, dem_path: str, config: TerrainConfig):
-        """
-        Extract rotated terrain crop using TerrainConfig.
-        Simplified - delegates to master function.
+    def extract_rotated_terrain(
+        self, dem_path: str, config: TerrainConfig
+    ) -> Tuple[np.ndarray, object, CRS, Tuple[float, float], np.ndarray, Tuple[float, float]]:
+        """Extract and process terrain elevation data.
+        
+        This method:
+        1. Determines center coordinates (from config or metadata)
+        2. Crops terrain to specified size
+        3. Rotates terrain by specified angle
+        4. Applies optional smoothing
+        
+        Args:
+            dem_path: Path to DEM file (GeoTIFF, DAT, or NetCDF)
+            config: TerrainConfig with extraction parameters
+            
+        Returns:
+            Tuple containing:
+            - elevation_data: 2D array of elevation values (meters)
+            - transform: Affine transform for geospatial coordinates
+            - crs: Coordinate reference system
+            - pixel_res: Pixel resolution (x_res, y_res) in meters
+            - crop_mask: Boolean mask indicating valid terrain region
+            - center_utm: Center coordinates in UTM (x, y)
+            
+        Raises:
+            FileNotFoundError: If DEM file doesn't exist
+            ValueError: If crop region is outside raster bounds
         """
         # Get center coordinates (from config or metadata)
         if config.center_coordinates:
@@ -66,9 +118,20 @@ class TerrainProcessor:
         return elevation_data, transform, crs, pixel_res, crop_mask, center_utm
 
     def extract_rotated_rmap(self, rmap_path: str, config: TerrainConfig) -> Tuple[np.ndarray, object]:
-        """
-        Crop roughness map using same parameters as DEM.
-        Simplified - uses master function.
+        """Extract roughness map using same parameters as DEM.
+        
+        This method crops the roughness map to match the terrain extraction,
+        ensuring spatial alignment for z0 field generation.
+        
+        Args:
+            rmap_path: Path to roughness map file
+            config: TerrainConfig with same parameters used for DEM
+            
+        Returns:
+            Tuple of (roughness_data, transform)
+            
+        Raises:
+            ValueError: If extract_rotated_terrain() hasn't been called first
         """
         if self.centre_utm is None:
             raise ValueError("Must call extract_rotated_terrain() before extract_rotated_rmap()")
@@ -84,23 +147,38 @@ class TerrainProcessor:
         
         return roughness_data, transform
     
-    def crop_and_rotate_raster(self, 
-                           raster_path: Union[str, Path],
-                           center_utm: Tuple[float, float],
-                           crop_size_km: float,
-                           rotation_deg: float = 0.0) -> tuple:
-        """
-        Master function for cropping any raster format.
-        All inputs assumed to be in UTM coordinates.
+    def crop_and_rotate_raster(
+        self, 
+        raster_path: Union[str, Path],
+        center_utm: Tuple[float, float],
+        crop_size_km: float,
+        rotation_deg: float = 0.0
+    ) -> Tuple[np.ndarray, object, CRS, Tuple[float, float], np.ndarray]:
+        """Master function for cropping and rotating any raster format.
+        
+        This function handles multiple raster formats (GeoTIFF, DAT, NetCDF) and
+        applies rotation by first cropping an expanded region, then masking to
+        the rotated rectangle.
+        
+        All inputs are assumed to be in UTM coordinates.
         
         Args:
             raster_path: Path to raster file (.tif, .dat, .nc)
-            center_utm: (x, y) UTM coordinates
-            crop_size_km: Crop size in kilometers
-            rotation_deg: Rotation angle in degrees
+            center_utm: (x, y) UTM coordinates of region center
+            crop_size_km: Size of region to extract (kilometers)
+            rotation_deg: Rotation angle clockwise from North (degrees)
         
         Returns:
-            (cropped_data, transform, crs, resolution, crop_mask)
+            Tuple containing:
+            - cropped_data: 2D array with rotated crop (NaN outside region)
+            - transform: Affine transform for the cropped region
+            - crs: Coordinate reference system
+            - resolution: Pixel resolution (x_res, y_res) in meters
+            - crop_mask: Boolean mask indicating valid region
+            
+        Raises:
+            ValueError: If crop area is outside raster bounds
+            ValueError: If raster format is not supported
         """
         raster_path = Path(raster_path)
         suffix = raster_path.suffix.lower()
@@ -144,7 +222,7 @@ class TerrainProcessor:
         center_utm_x, center_utm_y = center_utm
         
         # Calculate expanded bounds for rotation
-        buffer_size = crop_size_m * np.sqrt(2) / 2
+        buffer_size = crop_size_m * SQRT_2 / 2
         expanded_bounds = [
             center_utm_x - buffer_size,  # left
             center_utm_y - buffer_size,  # bottom
@@ -219,8 +297,8 @@ class TerrainProcessor:
         x, y, z = data[:, 0], data[:, 1], data[:, 2]
         
         # Handle no-data
-        if np.any(z == -9999):
-            z[z == -9999] = np.nan
+        if np.any(z == NODATA_VALUE):
+            z[z == NODATA_VALUE] = np.nan
         
         # Calculate bounds and resolution
         x_min, x_max = x.min(), x.max()
@@ -297,41 +375,77 @@ class TerrainProcessor:
         ds.close()
         return memfile
     
-    #Utility functions
-    def get_utm_crs(self, longitude, latitude):
-        """
-        Determine the appropriate UTM CRS for given coordinates.
+    def get_utm_crs(self, longitude: float, latitude: float) -> CRS:
+        """Determine the appropriate UTM CRS for given coordinates.
+        
+        UTM zones are 6 degrees wide, starting at -180 degrees longitude.
+        Northern hemisphere uses EPSG codes 32601-32660.
+        Southern hemisphere uses EPSG codes 32701-32760.
+        
+        Args:
+            longitude: Longitude in decimal degrees (-180 to 180)
+            latitude: Latitude in decimal degrees (-90 to 90)
+            
+        Returns:
+            rasterio CRS object for the appropriate UTM zone
         """
         # Calculate UTM zone
-        utm_zone = int((longitude + 180) / 6) + 1
+        utm_zone = int((longitude + 180) / UTM_ZONE_WIDTH) + 1
         
         # Determine hemisphere
         if latitude >= 0:
-            epsg_code = 32600 + utm_zone  # Northern hemisphere
+            epsg_code = UTM_NORTH_BASE + utm_zone  # Northern hemisphere
         else:
-            epsg_code = 32700 + utm_zone  # Southern hemisphere
+            epsg_code = UTM_SOUTH_BASE + utm_zone  # Southern hemisphere
         
         return CRS.from_epsg(epsg_code)
     
-    def latlon_to_utm(self, lat, lon, utm_crs):
-        """
-        Convert lat/lon coordinates to UTM coordinates.
+    def latlon_to_utm(self, lat: float, lon: float, utm_crs: CRS) -> Tuple[float, float]:
+        """Convert lat/lon coordinates to UTM coordinates.
+        
+        Args:
+            lat: Latitude in decimal degrees
+            lon: Longitude in decimal degrees
+            utm_crs: Target UTM coordinate reference system
+            
+        Returns:
+            Tuple of (utm_x, utm_y) coordinates in meters
         """
         # Create transformer from WGS84 to UTM
-        transformer = Transformer.from_crs(CRS.from_epsg(4326), utm_crs, always_xy=True)
+        transformer = Transformer.from_crs(
+            CRS.from_epsg(WGS84_EPSG), utm_crs, always_xy=True
+        )
         utm_x, utm_y = transformer.transform(lon, lat)
         return utm_x, utm_y
     
-    def create_rotated_crop_mask(self, center_x, center_y, crop_size_m, rotation_deg, x_coords, y_coords):
-        """
-        Create a mask for a rotated rectangular crop.
+    def create_rotated_crop_mask(
+        self, 
+        center_x: float, 
+        center_y: float, 
+        crop_size_m: float, 
+        rotation_deg: float, 
+        x_coords: np.ndarray, 
+        y_coords: np.ndarray
+    ) -> np.ndarray:
+        """Create a boolean mask for a rotated rectangular crop region.
+        
+        Args:
+            center_x: X coordinate of region center (UTM meters)
+            center_y: Y coordinate of region center (UTM meters)
+            crop_size_m: Size of square region (meters)
+            rotation_deg: Rotation angle clockwise from North (degrees)
+            x_coords: 2D array of X coordinates
+            y_coords: 2D array of Y coordinates
+            
+        Returns:
+            Boolean mask where True indicates points inside rotated rectangle
         """
         half_size = crop_size_m / 2
         rel_x = x_coords - center_x
         rel_y = y_coords - center_y
         
         # Use helper with inverse rotation
-        rotated_x, rotated_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg,inverse=True)
+        rotated_x, rotated_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg, inverse=True)
         
         mask = ((np.abs(rotated_x) <= half_size) & (np.abs(rotated_y) <= half_size))
         return mask
