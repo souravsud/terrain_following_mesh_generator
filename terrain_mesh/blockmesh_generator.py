@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 from pathlib import Path
 
 from .config import MeshConfig
+from .utils import create_blockMesh_spacing, generate_region_coordinates
 
 
 class BlockMeshGenerator:
@@ -46,14 +47,6 @@ class BlockMeshGenerator:
         """
         Generates an OpenFOAM blockMeshDict with flexible z-direction grading.
         """
-
-        class MockConfig:
-            def __init__(self, z_grading, total_z_cells, terrain_normal_first_layer):
-                self.z_grading = z_grading
-                self.total_z_cells = total_z_cells
-                self.terrain_normal_first_layer = terrain_normal_first_layer
-
-        mock_config = MockConfig(z_grading, total_z_cells, terrain_normal_first_layer)
 
         # Set default patch types if not provided
         if patch_types is None:
@@ -232,7 +225,9 @@ class BlockMeshGenerator:
                     points,
                     inlet_face_file,
                     domain_height,
-                    mock_config,
+                    z_grading,
+                    total_z_cells,
+                    terrain_normal_first_layer,
                 )
             os.makedirs(os.path.dirname(output_dict_file), exist_ok=True)
             # Write blockMeshDict
@@ -471,7 +466,9 @@ class BlockMeshGenerator:
         points,
         output_file,
         domain_height,
-        mesh_config,
+        z_grading,
+        total_z_cells,
+        terrain_normal_first_layer,
         roughness_data=None,
         roughness_transform=None,
         default_z0=0.1
@@ -518,51 +515,23 @@ class BlockMeshGenerator:
                 fill_value=default_z0
             )
 
-        # Collect inlet faces
-        if mesh_config.terrain_normal_first_layer:
-            for (i, j), (v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11) in block_positions.items():
-                if (i, j - 1) not in block_set:
-                    x_ground = points[j, i, 0]
-                    y_ground = points[j, i, 1]
-                    z_ground = points[j, i, 2]
-                    
-                    # Interpolate z0 at this location
-                    if z0_interpolator:
-                        z0_val = float(z0_interpolator([y_ground, x_ground])[0])
-                    else:
-                        z0_val = default_z0
-                    
-                    inlet_faces.append({
-                        "block_i": i,
-                        "block_j": j,
-                        "x_ground": x_ground,
-                        "y_ground": y_ground,
-                        "z_ground": z_ground,
-                        "z0": z0_val,
-                        "vertices": (v0, v1, v2, v3, v8, v9, v10, v11),
-                    })
-        else:
-            for (i, j), (v0, v1, v2, v3, v4, v5, v6, v7) in block_positions.items():
-                if (i, j - 1) not in block_set:
-                    x_ground = points[j, i, 0]
-                    y_ground = points[j, i, 1]
-                    z_ground = points[j, i, 2]
-                    
-                    # Interpolate z0 at this location
-                    if z0_interpolator:
-                        z0_val = float(z0_interpolator([y_ground, x_ground])[0])
-                    else:
-                        z0_val = default_z0
-                    
-                    inlet_faces.append({
-                        "block_i": i,
-                        "block_j": j,
-                        "x_ground": x_ground,
-                        "y_ground": y_ground,
-                        "z_ground": z_ground,
-                        "z0": z0_val,
-                        "vertices": (v0, v1, v2, v3, v4, v5, v6, v7),
-                    })
+        # Collect inlet faces (both terrain_normal_first_layer modes share identical face data)
+        for (i, j), vertices in block_positions.items():
+            if (i, j - 1) not in block_set:
+                x_ground = points[j, i, 0]
+                y_ground = points[j, i, 1]
+                z_ground = points[j, i, 2]
+                
+                z0_val = float(z0_interpolator([y_ground, x_ground])[0]) if z0_interpolator else default_z0
+                
+                inlet_faces.append({
+                    "block_i": i,
+                    "block_j": j,
+                    "x_ground": x_ground,
+                    "y_ground": y_ground,
+                    "z_ground": z_ground,
+                    "z0": z0_val,
+                })
 
         # Calculate statistics
         avg_inlet_height = sum(face["z_ground"] for face in inlet_faces) / len(inlet_faces)
@@ -582,12 +551,12 @@ class BlockMeshGenerator:
             f.write(f"domain_height={domain_height}\n")
             f.write(f"avg_inlet_height={avg_inlet_height:.6f}\n")
             f.write("mesh_type=graded\n")
-            f.write(f"total_z_cells={mesh_config.total_z_cells}\n")
+            f.write(f"total_z_cells={total_z_cells}\n")
 
             # Write z_grading
             f.write("z_grading=")
             grading_str = ";".join(
-                [f"{spec[0]},{spec[1]},{spec[2]}" for spec in mesh_config.z_grading]
+                [f"{spec[0]},{spec[1]},{spec[2]}" for spec in z_grading]
             )
             f.write(f"{grading_str}\n")
 
@@ -612,141 +581,6 @@ class BlockMeshGenerator:
 
         return inlet_faces
 
-    def create_blockMesh_spacing(self, n_points, grading_spec):
-        """
-        Create variable spacing coordinates from 0 to 1 using blockMesh-style grading.
-
-        Parameters:
-        -----------
-        n_points : int
-            Total number of points
-        grading_spec : list of tuples
-            [(length_fraction, cell_fraction, expansion_ratio), ...]
-            - length_fraction: fraction of domain length for this region
-            - cell_fraction: fraction of total cells for this region
-            - expansion_ratio: last_cell_size/first_cell_size in this region
-
-        Returns:
-        --------
-        np.ndarray
-            Coordinate array from 0 to 1 with blockMesh-style spacing
-        """
-
-        total_cells = n_points - 1
-        n_regions = len(grading_spec)
-        print(f"Creating blockMesh spacing with {n_regions} regions, total cells: {total_cells}")
-
-        # Extract specifications
-        length_fractions = np.array([spec[0] for spec in grading_spec])
-        cell_fractions = np.array([spec[1] for spec in grading_spec])
-        expansion_ratios = np.array([spec[2] for spec in grading_spec])
-
-        # Validate inputs
-        if abs(length_fractions.sum() - 1.0) > 1e-6:
-            raise ValueError(
-                f"Length fractions sum to {length_fractions.sum():.6f}, must sum to 1.0"
-            )
-
-        if abs(cell_fractions.sum() - 1.0) > 1e-6:
-            raise ValueError(
-                f"Cell fractions sum to {cell_fractions.sum():.6f}, must sum to 1.0"
-            )
-
-        # Calculate target cell counts (may not be integers)
-        target_cells = cell_fractions * total_cells
-
-        # Round to integers and adjust to maintain total
-        actual_cells = np.round(target_cells).astype(int)
-
-        # Adjust for rounding errors
-        cell_diff = total_cells - actual_cells.sum()
-        if cell_diff != 0:
-            # Add/subtract cells from regions with largest rounding errors
-            errors = target_cells - actual_cells
-            if cell_diff > 0:
-                # Need to add cells - add to regions with most positive error
-                indices = np.argsort(errors)[::-1]
-            else:
-                # Need to remove cells - remove from regions with most negative error
-                indices = np.argsort(errors)
-
-            for i in range(abs(cell_diff)):
-                actual_cells[indices[i]] += np.sign(cell_diff)
-
-        # Generate coordinates for each region
-        coords = [0.0]  # Start at 0
-        current_pos = 0.0
-
-        for i, (length_frac, actual_cell_count, expansion_ratio) in enumerate(
-            zip(length_fractions, actual_cells, expansion_ratios)
-        ):
-            region_length = length_frac
-
-            if actual_cell_count == 0:
-                continue
-
-            # Generate spacing within this region
-            region_coords = self.generate_region_coordinates(
-                actual_cell_count, expansion_ratio
-            )
-
-            # Scale to region length and add to current position
-            region_coords_scaled = region_coords * region_length + current_pos
-
-            # Add coordinates (skip the first one as it's already included)
-            coords.extend(region_coords_scaled[1:])
-
-            current_pos += region_length
-
-        return np.array(coords)
-
-    def generate_region_coordinates(self, n_cells, expansion_ratio):
-        """
-        Generate coordinates within a single region [0,1] with given expansion ratio.
-
-        Parameters:
-        -----------
-        n_cells : int
-            Number of cells in this region
-        expansion_ratio : float
-            Ratio of last_cell_size/first_cell_size
-
-        Returns:
-        --------
-        np.ndarray
-            Coordinates from 0 to 1 for this region
-        """
-
-        if n_cells == 0:
-            return np.array([0.0, 1.0])
-
-        if n_cells == 1:
-            return np.array([0.0, 1.0])
-
-        # For uniform spacing (expansion_ratio ≈ 1)
-        if abs(expansion_ratio - 1.0) < 1e-6:
-            return np.linspace(0.0, 1.0, n_cells + 1)
-
-        # For geometric progression
-        r = expansion_ratio ** (
-            1.0 / (n_cells - 1)
-        )  # Common ratio between adjacent cells
-
-        # Calculate first cell size
-        if abs(r - 1.0) < 1e-6:
-            ds = 1.0 / n_cells
-        else:
-            ds = (r - 1.0) / (r**n_cells - 1.0)
-
-        # Generate cell sizes
-        cell_sizes = ds * r ** np.arange(n_cells)
-
-        # Generate coordinates
-        coords = np.zeros(n_cells + 1)
-        coords[1:] = np.cumsum(cell_sizes)
-
-        return coords
-
     def _calculate_z_grading_spec(
         self,
         domain_height: float,
@@ -768,14 +602,14 @@ class BlockMeshGenerator:
         first_cell_size = 0
         if terrain_normal_first_layer:
             # Only need first 3 points for cell size calculation
-            z_coords = self.create_blockMesh_spacing(total_z_cells, z_grading)
+            z_coords = create_blockMesh_spacing(total_z_cells, z_grading)
             first_cell_size = (z_coords[1] - z_coords[0]) * domain_height
             second_cell_size = (z_coords[2] - z_coords[1]) * domain_height
             third_cell_size = (z_coords[3] - z_coords[2]) * domain_height
             print(f"First cell size: {first_cell_size}, Second cell size: {second_cell_size}, Third cell size: {third_cell_size}")
             cell_ratio = first_cell_size / second_cell_size
         else:
-            z_coords = self.create_blockMesh_spacing(total_z_cells + 1, z_grading)
+            z_coords = create_blockMesh_spacing(total_z_cells + 1, z_grading)
             
         if len(z_grading) == 1:
             # Single region - calculate expansion ratio from blockMesh spacing

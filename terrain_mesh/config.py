@@ -18,6 +18,27 @@ MIN_GRID_DIMENSION = 2
 GRADING_TOLERANCE = 1e-6  # Tolerance for floating-point comparison in grading validation
 DEFAULT_DOMAIN_HEIGHT = 4000.0
 DEFAULT_Z_CELLS = 10
+
+
+def _validate_grading(grading: List[Tuple[float, float, float]], name: str) -> None:
+    """Validate that grading fractions sum to 1.0.
+
+    Args:
+        grading: List of (length_fraction, cell_fraction, expansion_ratio) tuples
+        name: Name of the grading parameter for error messages
+
+    Raises:
+        ValueError: If fractions don't sum to 1.0 within tolerance
+    """
+    length_sum = sum(spec[0] for spec in grading)
+    cell_sum = sum(spec[1] for spec in grading)
+
+    if abs(length_sum - 1.0) > GRADING_TOLERANCE:
+        raise ValueError(f"{name} length fractions must sum to 1.0, got {length_sum}")
+    if abs(cell_sum - 1.0) > GRADING_TOLERANCE:
+        raise ValueError(f"{name} cell fractions must sum to 1.0, got {cell_sum}")
+
+
 DEFAULT_AOI_FRACTION = 0.4
 DEFAULT_FLAT_BOUNDARY_THICKNESS = 0.1
 DEFAULT_PROGRESSION_RATE = 1.5
@@ -84,32 +105,9 @@ class GridConfig:
             )
 
         if self.x_grading:
-            self._validate_grading(self.x_grading, "x_grading")
+            _validate_grading(self.x_grading, "x_grading")
         if self.y_grading:
-            self._validate_grading(self.y_grading, "y_grading")
-
-    @staticmethod
-    def _validate_grading(grading: List[Tuple[float, float, float]], name: str) -> None:
-        """Validate that grading fractions sum to 1.0.
-        
-        Args:
-            grading: List of (length_fraction, cell_fraction, expansion_ratio) tuples
-            name: Name of the grading parameter for error messages
-            
-        Raises:
-            ValueError: If fractions don't sum to 1.0 within tolerance
-        """
-        length_sum = sum(spec[0] for spec in grading)
-        cell_sum = sum(spec[1] for spec in grading)
-
-        if abs(length_sum - 1.0) > GRADING_TOLERANCE:
-            raise ValueError(
-                f"{name} length fractions must sum to 1.0, got {length_sum}"
-            )
-        if abs(cell_sum - 1.0) > GRADING_TOLERANCE:
-            raise ValueError(
-                f"{name} cell fractions must sum to 1.0, got {cell_sum}"
-            )
+            _validate_grading(self.y_grading, "y_grading")
 
 
 @dataclass
@@ -149,28 +147,9 @@ class MeshConfig:
                 "sides": "patch",
             }
         
-        # Validate z_grading if specified
         if self.z_grading:
-            self._validate_z_grading()
-        
-    
-    def _validate_z_grading(self) -> None:
-        """Validate z-direction grading specification.
-        
-        Raises:
-            ValueError: If fractions don't sum to 1.0 within tolerance
-        """
-        length_sum = sum(spec[0] for spec in self.z_grading)
-        cell_sum = sum(spec[1] for spec in self.z_grading)
+            _validate_grading(self.z_grading, "z_grading")
 
-        if abs(length_sum - 1.0) > GRADING_TOLERANCE:
-            raise ValueError(
-                f"z_grading length fractions must sum to 1.0, got {length_sum}"
-            )
-        if abs(cell_sum - 1.0) > GRADING_TOLERANCE:
-            raise ValueError(
-                f"z_grading cell fractions must sum to 1.0, got {cell_sum}"
-            )
 
 @dataclass
 class VisualizationConfig:
@@ -284,35 +263,27 @@ def load_config(config_path: str) -> Dict[str, Any]:
     with open(config_path, "r") as file:
         config_data = yaml.safe_load(file) or {}
 
-    # Create config objects with defaults, override with YAML values
-    configs = {}
+    def _to_tuples(data: dict, *keys) -> None:
+        """Convert list-of-lists grading specs to list-of-tuples in-place."""
+        for key in keys:
+            if key in data:
+                data[key] = [tuple(spec) for spec in data[key]]
 
     # Terrain configuration
-    terrain_data = config_data.get("terrain", {})
-    configs["terrain_config"] = TerrainConfig(**terrain_data)
+    configs = {}
+    configs["terrain_config"] = TerrainConfig(**config_data.get("terrain", {}))
 
-    # Grid configuration
+    # Grid configuration — convert grading arrays from lists to tuples
     grid_data = config_data.get("grid", {})
-    # Handle grading arrays - convert lists of lists to lists of tuples
-    if "x_grading" in grid_data:
-        grid_data["x_grading"] = [tuple(spec) for spec in grid_data["x_grading"]]
-    if "y_grading" in grid_data:
-        grid_data["y_grading"] = [tuple(spec) for spec in grid_data["y_grading"]]
+    _to_tuples(grid_data, "x_grading", "y_grading")
     configs["grid_config"] = GridConfig(**grid_data)
 
-    # Mesh configuration
+    # Mesh configuration — convert grading array from lists to tuples
     mesh_data = config_data.get("mesh", {})
-    # Handle z_grading array - convert lists of lists to lists of tuples
-    if "z_grading" in mesh_data:
-        mesh_data["z_grading"] = [tuple(spec) for spec in mesh_data["z_grading"]]
+    _to_tuples(mesh_data, "z_grading")
     configs["mesh_config"] = MeshConfig(**mesh_data)
 
-    # Boundary configuration
-    boundary_data = config_data.get("boundary", {})
-    configs["boundary_config"] = BoundaryConfig(**boundary_data)
-
-    # Visualization configuration
-    viz_data = config_data.get("visualization", {})
-    configs["visualization_config"] = VisualizationConfig(**viz_data)
+    configs["boundary_config"] = BoundaryConfig(**config_data.get("boundary", {}))
+    configs["visualization_config"] = VisualizationConfig(**config_data.get("visualization", {}))
 
     return configs

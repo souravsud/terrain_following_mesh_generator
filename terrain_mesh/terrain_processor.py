@@ -110,7 +110,7 @@ class TerrainProcessor:
         
         # Apply smoothing if specified
         if config.smoothing_sigma > 0:
-            elevation_data = self.smooth_terrain_for_cfd(
+            elevation_data = smooth_terrain_for_cfd(
                 elevation_data, 
                 sigma=config.smoothing_sigma
             )
