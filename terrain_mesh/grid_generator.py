@@ -4,7 +4,7 @@ from scipy.ndimage import map_coordinates
 from typing import Tuple
 
 from .config import GridConfig, TerrainConfig
-from .utils import rotate_coordinates
+from .utils import rotate_coordinates, create_blockMesh_spacing
 
 class StructuredGridGenerator:
     """Generate structured grids from terrain data"""
@@ -84,7 +84,7 @@ class StructuredGridGenerator:
         # 4. Create grid coordinates to fit these exact bounds
         if x_grading is not None:
             print(f"Creating X grading: {x_grading}")
-            x_norm = self.create_blockMesh_spacing(target_cols, x_grading)
+            x_norm = create_blockMesh_spacing(target_cols, x_grading)
             # Scale to fit exact terrain width
             x_coords = x_norm * terrain_width + min_x_rot
         else:
@@ -93,7 +93,7 @@ class StructuredGridGenerator:
         
         if y_grading is not None:
             print(f"Creating Y grading: {y_grading}")
-            y_norm = self.create_blockMesh_spacing(target_rows, y_grading)
+            y_norm = create_blockMesh_spacing(target_rows, y_grading)
             # Scale to fit exact terrain height
             y_coords = y_norm * terrain_height + min_y_rot
         else:
@@ -154,152 +154,7 @@ class StructuredGridGenerator:
         grid.dimensions = (target_cols, target_rows, 1)
         grid.point_data['elevation'] = Z.ravel()
         
-        # Save to file
-        grid.save("terrain_structured.vtk")
-        print("Grid saved to terrain_structured.vtk")
         return grid
-    
-    def create_blockMesh_spacing(self, n_points, grading_spec):
-        """
-        Create variable spacing coordinates from 0 to 1 using blockMesh-style grading.
-        
-        Parameters:
-        -----------
-        n_points : int
-            Total number of points
-        grading_spec : list of tuples
-            [(length_fraction, cell_fraction, expansion_ratio), ...]
-            - length_fraction: fraction of domain length for this region
-            - cell_fraction: fraction of total cells for this region  
-            - expansion_ratio: last_cell_size/first_cell_size in this region
-        
-        Returns:
-        --------
-        np.ndarray
-            Coordinate array from 0 to 1 with blockMesh-style spacing
-        """
-        
-        total_cells = n_points - 1
-        n_regions = len(grading_spec)
-        
-        # Extract specifications
-        length_fractions = np.array([spec[0] for spec in grading_spec])
-        cell_fractions = np.array([spec[1] for spec in grading_spec])
-        expansion_ratios = np.array([spec[2] for spec in grading_spec])
-        
-        # Validate inputs
-        if abs(length_fractions.sum() - 1.0) > 1e-6:
-            raise ValueError(f"Length fractions sum to {length_fractions.sum():.6f}, must sum to 1.0")
-        
-        if abs(cell_fractions.sum() - 1.0) > 1e-6:
-            raise ValueError(f"Cell fractions sum to {cell_fractions.sum():.6f}, must sum to 1.0")
-        
-        # Calculate target cell counts (may not be integers)
-        target_cells = cell_fractions * total_cells
-        
-        # Round to integers and adjust to maintain total
-        actual_cells = np.round(target_cells).astype(int)
-        
-        # Adjust for rounding errors
-        cell_diff = total_cells - actual_cells.sum()
-        if cell_diff != 0:
-            # Add/subtract cells from regions with largest rounding errors
-            errors = target_cells - actual_cells
-            if cell_diff > 0:
-                # Need to add cells - add to regions with most positive error
-                indices = np.argsort(errors)[::-1]
-            else:
-                # Need to remove cells - remove from regions with most negative error  
-                indices = np.argsort(errors)
-            
-            for i in range(abs(cell_diff)):
-                actual_cells[indices[i]] += np.sign(cell_diff)
-        
-        # Check for warnings
-        relative_errors = np.abs(actual_cells - target_cells) / target_cells
-        max_error = relative_errors.max()
-        if max_error > 0.05:  # 5% threshold
-            print(f"WARNING: Cell count adjustment needed. Max relative error: {max_error:.1%}")
-            for i, (target, actual) in enumerate(zip(target_cells, actual_cells)):
-                error = abs(actual - target) / target
-                if error > 0.02:
-                    print(f"  Region {i}: {target:.1f} -> {actual} cells ({error:.1%} error)")
-        
-        # Generate coordinates for each region
-        coords = [0.0]  # Start at 0
-        current_pos = 0.0
-        
-        print(f"Region breakdown:")
-        for i, (length_frac, actual_cell_count, expansion_ratio) in enumerate(zip(length_fractions, actual_cells, expansion_ratios)):
-            region_length = length_frac
-            
-            print(f"  Region {i}: {actual_cell_count} cells, length {region_length:.3f}, ratio {expansion_ratio}")
-            
-            if actual_cell_count == 0:
-                continue
-                
-            # Generate spacing within this region
-            region_coords = self.generate_region_coordinates(actual_cell_count, expansion_ratio)
-            
-            # Scale to region length and add to current position
-            region_coords_scaled = region_coords * region_length + current_pos
-            
-            # Add coordinates (skip the first one as it's already included)
-            coords.extend(region_coords_scaled[1:])
-            
-            current_pos += region_length
-        
-        return np.array(coords)
-    
-    def generate_region_coordinates(self, n_cells, expansion_ratio):
-        """
-        Generate coordinates within a single region [0,1] with given expansion ratio.
-        
-        Parameters:
-        -----------
-        n_cells : int
-            Number of cells in this region
-        expansion_ratio : float
-            Ratio of last_cell_size/first_cell_size
-            
-        Returns:
-        --------
-        np.ndarray
-            Coordinates from 0 to 1 for this region
-        """
-        
-        if n_cells == 0:
-            return np.array([0.0, 1.0])
-        
-        if n_cells == 1:
-            return np.array([0.0, 1.0])
-        
-        # For uniform spacing (expansion_ratio ≈ 1)
-        if abs(expansion_ratio - 1.0) < 1e-6:
-            return np.linspace(0.0, 1.0, n_cells + 1)
-        
-        # For geometric progression
-        # If first cell has size ds, then cell sizes are: ds, ds*r, ds*r², ..., ds*r^(n-1)
-        # where r is the common ratio between adjacent cells
-        # Total length = ds * (1 + r + r² + ... + r^(n-1)) = ds * (r^n - 1)/(r - 1) = 1
-        # Also: last_cell/first_cell = ds*r^(n-1) / ds = r^(n-1) = expansion_ratio
-        
-        r = expansion_ratio**(1.0/(n_cells-1))  # Common ratio between adjacent cells
-        
-        # Calculate first cell size
-        if abs(r - 1.0) < 1e-6:
-            ds = 1.0 / n_cells
-        else:
-            ds = (r - 1.0) / (r**n_cells - 1.0)
-        
-        # Generate cell sizes
-        cell_sizes = ds * r**np.arange(n_cells)
-        
-        # Generate coordinates
-        coords = np.zeros(n_cells + 1)
-        coords[1:] = np.cumsum(cell_sizes)
-        
-        return coords
     
     def create_grid(self, elevation_data: np.ndarray, transform, grid_config: GridConfig,
                terrain_config: TerrainConfig, crop_mask: np.ndarray, centre_utm) -> pv.StructuredGrid:
