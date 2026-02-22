@@ -17,6 +17,8 @@ class BlockMeshGenerator:
         input_vtk_file: str = "terrain_structured.vtk",
         output_dict_file: str = "system/blockMeshDict",
         inlet_face_file: str = "0/include/inletFaceInfo.txt",
+        roughness_data: np.ndarray = None,
+        roughness_transform: object = None,
     ):
         """Wrapper method that uses MeshConfig"""
 
@@ -30,6 +32,8 @@ class BlockMeshGenerator:
             terrain_normal_first_layer=config.terrain_normal_first_layer,
             patch_types=config.patch_types,
             extract_inlet_face_info=config.extract_inlet_face_info,
+            roughness_data=roughness_data,
+            roughness_transform=roughness_transform,
         )
 
     def _blockMeshDictCreator(
@@ -43,6 +47,8 @@ class BlockMeshGenerator:
         patch_types=None,
         extract_inlet_face_info=True,
         terrain_normal_first_layer = False,
+        roughness_data=None,
+        roughness_transform=None,
     ):
         """
         Generates an OpenFOAM blockMeshDict with flexible z-direction grading.
@@ -228,6 +234,8 @@ class BlockMeshGenerator:
                     z_grading,
                     total_z_cells,
                     terrain_normal_first_layer,
+                    roughness_data,
+                    roughness_transform,
                 )
             os.makedirs(os.path.dirname(output_dict_file), exist_ok=True)
             # Write blockMeshDict
@@ -243,7 +251,7 @@ class BlockMeshGenerator:
                 f.write("FoamFile\n{\n    version     2.0;\n    format      ascii;\n")
                 f.write("    class       dictionary;\n    object      blockMeshDict;\n}\n")
                 f.write("// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n")
-                f.write("convertToMeters 1;\n\n")
+                f.write("scale 1;\n\n")
 
                 # Vertices (only valid ones)
                 f.write("vertices\n(\n")
@@ -476,6 +484,8 @@ class BlockMeshGenerator:
         """
         Saves inlet face information to a file with mesh parameters AND z0 values.
         """
+        z0_min = 0.0002 # Minimum z0 to avoid zero or extremely small values that can cause numerical issues in log-law calculations- values corresponds to that of water
+        
         from scipy.interpolate import RegularGridInterpolator
         
         print("Saving inlet face information...")
@@ -536,9 +546,26 @@ class BlockMeshGenerator:
         # Calculate statistics
         avg_inlet_height = sum(face["z_ground"] for face in inlet_faces) / len(inlet_faces)
         if z0_interpolator:
-            z0_values = [face["z0"] for face in inlet_faces]
-            z0_stats = f"min={min(z0_values):.4f}, max={max(z0_values):.4f}, mean={np.mean(z0_values):.4f}"
+            z0_values = np.array([face["z0"] for face in inlet_faces])
+            z0_values = np.maximum(z0_values, z0_min)
+            
+            # Avoid zero or extremely small values
+            z0_values = z0_values[z0_values > 0]
+            
+            # Geometric mean (physically correct for log-law)
+            z0_eff = float(np.exp(np.mean(np.log(z0_values))))
+            
+            z0_stats = (
+                f"min={z0_values.min():.4f}, "
+                f"max={z0_values.max():.4f}, "
+                f"arith_mean={np.mean(z0_values):.4f}, "
+                f"geo_mean={z0_eff:.4f}"
+            )
+            
             print(f"Inlet z0 statistics: {z0_stats}")
+        else:
+            z0_eff = default_z0
+            print(f"No roughness data provided, using default z0={default_z0}")
 
         # Save to file
         with open(output_file, "w") as f:
@@ -550,6 +577,7 @@ class BlockMeshGenerator:
             f.write("# MESH_PARAMETERS_START\n")
             f.write(f"domain_height={domain_height}\n")
             f.write(f"avg_inlet_height={avg_inlet_height:.6f}\n")
+            f.write(f"z0_eff_atInlet={z0_eff:.6f}\n")
             f.write("mesh_type=graded\n")
             f.write(f"total_z_cells={total_z_cells}\n")
 

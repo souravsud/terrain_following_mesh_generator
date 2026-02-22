@@ -587,7 +587,7 @@ class BoundaryTreatment:
         rel_x = x_grid - center_col
         rel_y = y_grid - center_row
         
-        flow_x, flow_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg)
+        flow_x, flow_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg, inverse=True)
         
         valid_flow_x = flow_x[crop_mask]
         valid_flow_y = flow_y[crop_mask]

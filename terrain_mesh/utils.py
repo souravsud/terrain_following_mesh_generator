@@ -16,7 +16,7 @@ def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False):
         If True, apply inverse rotation
     """
     # Convert to rotation for domain alignment
-    theta = np.radians(270 - rotation_deg)
+    theta = np.radians(rotation_deg - 270)
     if inverse:
         theta = -theta
 
