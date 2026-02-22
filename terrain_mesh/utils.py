@@ -16,7 +16,7 @@ def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False):
         If True, apply inverse rotation
     """
     # Convert to rotation for domain alignment
-    theta = np.radians(270 - rotation_deg)
+    theta = np.radians(rotation_deg - 270)
     if inverse:
         theta = -theta
 
@@ -31,7 +31,7 @@ def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False):
 
     return x_rot, y_rot
 
-def smooth_terrain_for_cfd(self, elevation_data, sigma=2.0, preserve_nan=True):
+def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
     """
     Smooth terrain data for better CFD mesh quality
     
@@ -161,3 +161,92 @@ def get_array_stats(data: np.ndarray) -> dict:
         "mean": float(np.nanmean(data)),
         "std": float(np.nanstd(data))
     }
+
+
+def generate_region_coordinates(n_cells, expansion_ratio):
+    """
+    Generate coordinates within a single region [0,1] with given expansion ratio.
+
+    Parameters:
+    -----------
+    n_cells : int
+        Number of cells in this region
+    expansion_ratio : float
+        Ratio of last_cell_size/first_cell_size
+
+    Returns:
+    --------
+    np.ndarray
+        Coordinates from 0 to 1 for this region
+    """
+    if n_cells <= 1:
+        return np.array([0.0, 1.0])
+
+    # For uniform spacing (expansion_ratio ≈ 1)
+    if abs(expansion_ratio - 1.0) < 1e-6:
+        return np.linspace(0.0, 1.0, n_cells + 1)
+
+    # For geometric progression:
+    # cell sizes are ds, ds*r, ds*r², ..., ds*r^(n-1)
+    # where r^(n-1) = expansion_ratio  =>  r = expansion_ratio^(1/(n-1))
+    r = expansion_ratio ** (1.0 / (n_cells - 1))
+
+    ds = (r - 1.0) / (r ** n_cells - 1.0) if abs(r - 1.0) >= 1e-6 else 1.0 / n_cells
+
+    cell_sizes = ds * r ** np.arange(n_cells)
+    coords = np.zeros(n_cells + 1)
+    coords[1:] = np.cumsum(cell_sizes)
+    return coords
+
+
+def create_blockMesh_spacing(n_points, grading_spec):
+    """
+    Create variable spacing coordinates from 0 to 1 using blockMesh-style grading.
+
+    Parameters:
+    -----------
+    n_points : int
+        Total number of points
+    grading_spec : list of tuples
+        [(length_fraction, cell_fraction, expansion_ratio), ...]
+        - length_fraction: fraction of domain length for this region
+        - cell_fraction: fraction of total cells for this region
+        - expansion_ratio: last_cell_size/first_cell_size in this region
+
+    Returns:
+    --------
+    np.ndarray
+        Coordinate array from 0 to 1 with blockMesh-style spacing
+    """
+    total_cells = n_points - 1
+
+    length_fractions = np.array([spec[0] for spec in grading_spec])
+    cell_fractions = np.array([spec[1] for spec in grading_spec])
+    expansion_ratios = np.array([spec[2] for spec in grading_spec])
+
+    if abs(length_fractions.sum() - 1.0) > 1e-6:
+        raise ValueError(f"Length fractions sum to {length_fractions.sum():.6f}, must sum to 1.0")
+    if abs(cell_fractions.sum() - 1.0) > 1e-6:
+        raise ValueError(f"Cell fractions sum to {cell_fractions.sum():.6f}, must sum to 1.0")
+
+    target_cells = cell_fractions * total_cells
+    actual_cells = np.round(target_cells).astype(int)
+
+    # Adjust for rounding errors
+    cell_diff = total_cells - actual_cells.sum()
+    if cell_diff != 0:
+        errors = target_cells - actual_cells
+        indices = np.argsort(errors)[::-1] if cell_diff > 0 else np.argsort(errors)
+        for i in range(abs(cell_diff)):
+            actual_cells[indices[i]] += np.sign(cell_diff)
+
+    coords = [0.0]
+    current_pos = 0.0
+    for length_frac, actual_cell_count, expansion_ratio in zip(length_fractions, actual_cells, expansion_ratios):
+        if actual_cell_count == 0:
+            continue
+        region_coords = generate_region_coordinates(actual_cell_count, expansion_ratio)
+        coords.extend((region_coords[1:] * length_frac + current_pos).tolist())
+        current_pos += length_frac
+
+    return np.array(coords)

@@ -181,7 +181,8 @@ class TerrainMeshPipeline:
             blockmesh_path = output_dir / 'system' / 'blockMeshDict'
             inletFaceInfo_path = output_dir / '0' / 'include' / 'inletFaceInfo.txt'
             self.blockmesh_generator.generate_blockMeshDict(
-                mesh_config, str(vtk_path), str(blockmesh_path), str(inletFaceInfo_path)
+                mesh_config, str(vtk_path), str(blockmesh_path), str(inletFaceInfo_path),
+                roughness_data, roughness_transform
             )
             logger.info(f"blockMeshDict saved to: {blockmesh_path}")
             logger.info(f"inletFaceInfo saved to: {inletFaceInfo_path}")

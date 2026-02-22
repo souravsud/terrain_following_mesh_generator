@@ -401,14 +401,11 @@ class BoundaryTreatment:
         max_kernel_size = self._calculate_max_kernel_size(config)
         heavily_smoothed = self._apply_heavy_smoothing(result, crop_mask, max_kernel_size, config)
         
-        # Blend between heavily smoothed and target
-        blend_indices = np.where(blend_mask)
-        for idx in range(len(blend_indices[0])):
-            i, j = blend_indices[0][idx], blend_indices[1][idx]
-            blend_factor = blend_factors[idx]
-            
-            smoothed_value = heavily_smoothed[i, j]
-            result[i, j] = smoothed_value * (1 - blend_factor) + target_elevation * blend_factor
+        # Vectorized blend: result = smoothed * (1-t) + target * t
+        result[blend_mask] = (
+            heavily_smoothed[blend_mask] * (1.0 - blend_factors) +
+            target_elevation * blend_factors
+        )
         
         return result
     
@@ -590,7 +587,7 @@ class BoundaryTreatment:
         rel_x = x_grid - center_col
         rel_y = y_grid - center_row
         
-        flow_x, flow_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg)
+        flow_x, flow_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg, inverse=True)
         
         valid_flow_x = flow_x[crop_mask]
         valid_flow_y = flow_y[crop_mask]
