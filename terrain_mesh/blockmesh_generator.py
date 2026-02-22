@@ -533,7 +533,8 @@ class BlockMeshGenerator:
                 z_ground = points[j, i, 2]
                 
                 z0_val = float(z0_interpolator([y_ground, x_ground])[0]) if z0_interpolator else default_z0
-                
+                z0_val = max(z0_val, z0_min)
+
                 inlet_faces.append({
                     "block_i": i,
                     "block_j": j,
@@ -547,7 +548,6 @@ class BlockMeshGenerator:
         avg_inlet_height = sum(face["z_ground"] for face in inlet_faces) / len(inlet_faces)
         if z0_interpolator:
             z0_values = np.array([face["z0"] for face in inlet_faces])
-            z0_values = np.maximum(z0_values, z0_min)
             
             # Avoid zero or extremely small values
             z0_values = z0_values[z0_values > 0]
