@@ -444,8 +444,9 @@ class TerrainProcessor:
         rel_x = x_coords - center_x
         rel_y = y_coords - center_y
         
-        # Use helper with inverse rotation
-        rotated_x, rotated_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg, inverse=True)
+        # Use helper with inverse rotation.
+        # Coordinates here are UTM (y increases northward), so geographic=True.
+        rotated_x, rotated_y = rotate_coordinates(rel_x, rel_y, 0, 0, rotation_deg, inverse=True, geographic=True)
         
         mask = ((np.abs(rotated_x) <= half_size) & (np.abs(rotated_y) <= half_size))
         return mask

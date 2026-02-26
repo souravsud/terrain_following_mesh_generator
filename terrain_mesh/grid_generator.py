@@ -64,11 +64,13 @@ class StructuredGridGenerator:
         
         print(f"Terrain center: ({terrain_center_x:.1f}, {terrain_center_y:.1f})")
         
-        # 3. Rotate all terrain points to find bounds in rotated coordinate system
+        # 3. Rotate all terrain points to find bounds in rotated coordinate system.
+        # Coordinates are UTM (y increases northward), so geographic=True is required
+        # so that y_rotated increases in the downwind direction (inlet at min y_rot).
         x_rotated, y_rotated = rotate_coordinates(
                                                     terrain_utm_x, terrain_utm_y, 
                                                     terrain_center_x, terrain_center_y, 
-                                                    rotation_deg, inverse=True
+                                                    rotation_deg, inverse=True, geographic=True
                                                 )
         
         # Find bounds in rotated space
@@ -102,11 +104,12 @@ class StructuredGridGenerator:
         
         X_local, Y_local = np.meshgrid(x_coords, y_coords)
         
-        # 5. Rotate grid back to UTM coordinates
+        # 5. Rotate grid back to UTM coordinates.
+        # geographic=True matches the convention used for the inverse rotation above.
         X_rotated_back, Y_rotated_back = rotate_coordinates(
                                                             X_local, Y_local,
                                                             0, 0,  # Already centered in rotated space
-                                                            rotation_deg, inverse=False
+                                                            rotation_deg, inverse=False, geographic=True
                                                         )
         # 6. Translate back to UTM coordinates
         X_utm = X_rotated_back + terrain_center_x

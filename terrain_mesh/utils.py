@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from scipy.ndimage import gaussian_filter
 
-def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False):
+def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False, geographic=False):
     """
     Rotate coordinates around center point.
 
@@ -13,10 +13,25 @@ def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False):
     rotation_deg : float
         Meteorological wind direction (0°=N, 90°=E, 180°=S, 270°=W)
     inverse : bool
-        If True, apply inverse rotation
+        If True, apply inverse rotation (terrain → flow-aligned).
+        If False, apply forward rotation (flow-aligned → terrain).
+    geographic : bool
+        If True, use geographic/UTM convention where y increases northward.
+        The inverse rotation maps UTM coordinates to flow-aligned coordinates
+        such that positive y_rot points downwind.
+        If False (default), use pixel/image convention where y increases
+        southward (row 0 = top = North).
     """
-    # Convert to rotation for domain alignment
-    theta = np.radians(rotation_deg - 270)
+    if geographic:
+        # UTM convention (y = North): the inverse rotation (terrain → flow-aligned)
+        # should map the downwind direction to positive y_rot.
+        # Setting the base theta to -(rotation_deg + 180) achieves this: when
+        # inverse=True the applied angle becomes rotation_deg + 180, placing the
+        # downwind direction along the positive y_rot axis.
+        theta = np.radians(-(rotation_deg + 180))
+    else:
+        # Pixel convention (y = South, row 0 = top = North)
+        theta = np.radians(rotation_deg - 270)
     if inverse:
         theta = -theta
 
