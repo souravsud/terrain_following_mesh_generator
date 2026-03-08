@@ -119,7 +119,7 @@ class TerrainMeshPipeline:
         # Step 1: Extract terrain and roughness data
         logger.info("[1/6] Extracting terrain elevation...")
         print("\n[1/6] Extracting terrain elevation...")
-        elevation_data, transform, crs, pixel_res, crop_mask, centre_utm = \
+        elevation_data, min_elevation, transform, crs, pixel_res, crop_mask, centre_utm = \
             self.processor.extract_rotated_terrain(dem_path, terrain_config)
         
         roughness_data, roughness_transform = None, None
@@ -128,6 +128,11 @@ class TerrainMeshPipeline:
             print("[1/6] Extracting roughness map...")
             roughness_data, roughness_transform = \
                 self.processor.extract_rotated_rmap(rmap_path, terrain_config)
+        
+        if mesh_config.adjust_ceiling_for_terrain and min_elevation != 0.0:
+            logger.info("[1/6] Adjusting domain ceiling for terrain altitude (AGL mode)...")
+            print("[1/6] Adjusting domain ceiling for terrain altitude (AGL mode)...")
+            mesh_config.domain_height = mesh_config.domain_height + min_elevation
         
         # Step 2: Apply boundary treatment
         logger.info("[2/6] Applying boundary treatment...")
@@ -238,6 +243,7 @@ class TerrainMeshPipeline:
                 treated_elevation=treated_elevation,
                 transform=transform,
                 crs=crs,
+                min_elevation=min_elevation,
                 pixel_res=pixel_res,
                 grid=grid,
                 vtk_path=vtk_path,
