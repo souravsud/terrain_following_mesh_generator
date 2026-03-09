@@ -6,6 +6,7 @@ This module provides dataclass-based configuration for:
 - OpenFOAM mesh output
 - Boundary treatment and smoothing
 - Visualization options
+- External tool versions (for reproducibility)
 """
 
 from dataclasses import dataclass
@@ -241,6 +242,28 @@ class BoundaryConfig:
             self.flat_boundaries = ["north", "south", "east", "west"]
 
 
+@dataclass
+class ToolsConfig:
+    """Configuration for external tool versions used in the pipeline.
+
+    These fields are written into the pipeline metadata to aid reproducibility
+    under FAIR data principles.  Python and common Python-package versions are
+    detected automatically at run-time; the OpenFOAM version cannot be queried
+    programmatically and must therefore be supplied manually.
+
+    Attributes:
+        openfoam_version: OpenFOAM release string.  OpenFOAM uses two separate
+            version schemes — ESI/OpenCFD releases (e.g. ``"v2312"``, ``"v2406"``)
+            and OpenFOAM Foundation releases (e.g. ``"10"``, ``"11"``).  Set this
+            to whichever string matches your installation.  Set this in your YAML
+            config under the ``tools`` section so the generated metadata records
+            which solver version was used.  Leave as ``null`` / ``None`` if
+            unknown.
+    """
+
+    openfoam_version: Optional[str] = None
+
+
 def load_config(config_path: str) -> Dict[str, Any]:
     """Load configuration from YAML file and return instantiated config objects.
     
@@ -252,7 +275,8 @@ def load_config(config_path: str) -> Dict[str, Any]:
         
     Returns:
         Dictionary with config object instances ready for pipeline.run(**configs).
-        Keys: terrain_config, grid_config, mesh_config, boundary_config, visualization_config
+        Keys: terrain_config, grid_config, mesh_config, boundary_config,
+        visualization_config, tools_config
         
     Raises:
         FileNotFoundError: If config_path doesn't exist
@@ -289,5 +313,6 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
     configs["boundary_config"] = BoundaryConfig(**config_data.get("boundary", {}))
     configs["visualization_config"] = VisualizationConfig(**config_data.get("visualization", {}))
+    configs["tools_config"] = ToolsConfig(**config_data.get("tools", {}))
 
     return configs

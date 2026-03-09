@@ -6,7 +6,7 @@ of the mesh generation process from terrain extraction to OpenFOAM export.
 import logging
 from pathlib import Path
 from typing import Union, Optional, Dict
-from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig
+from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig, ToolsConfig
 from .utils import write_metadata
 from .terrain_processor import TerrainProcessor
 from .boundary_treatment import BoundaryTreatment
@@ -63,6 +63,7 @@ class TerrainMeshPipeline:
            mesh_config: Optional[MeshConfig] = None,
            boundary_config: Optional[BoundaryConfig] = None,
            visualization_config: Optional[VisualizationConfig] = None,
+           tools_config: Optional[ToolsConfig] = None,
            rmap_path: Optional[Union[str, Path]] = None,
            output_dir: Optional[Union[str, Path]] = None, 
            create_blockmesh: bool = True,
@@ -76,6 +77,8 @@ class TerrainMeshPipeline:
             mesh_config: Optional configuration for mesh and OpenFOAM output
             boundary_config: Optional configuration for boundary treatment
             visualization_config: Optional configuration for plotting
+            tools_config: Optional configuration recording external tool versions
+                (e.g. OpenFOAM release) for FAIR-data metadata
             rmap_path: Optional path to roughness map for z0 field generation
             output_dir: Output directory for all generated files
             create_blockmesh: If True, generate OpenFOAM blockMeshDict
@@ -98,6 +101,7 @@ class TerrainMeshPipeline:
         mesh_config = mesh_config or MeshConfig()
         boundary_config = boundary_config or BoundaryConfig()
         visualization_config = visualization_config or VisualizationConfig()
+        tools_config = tools_config or ToolsConfig()
         
         if output_dir is None:
             output_dir = Path.cwd() / 'terrain_mesh_output'
@@ -239,6 +243,7 @@ class TerrainMeshPipeline:
                 mesh_config=mesh_config,
                 boundary_config=boundary_config,
                 visualization_config=visualization_config,
+                tools_config=tools_config,
                 elevation_data=elevation_data,
                 treated_elevation=treated_elevation,
                 transform=transform,

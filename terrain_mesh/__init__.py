@@ -44,6 +44,7 @@ from .config import (
     MeshConfig, 
     BoundaryConfig, 
     VisualizationConfig, 
+    ToolsConfig,
     load_config
 )
 from .pipeline import TerrainMeshPipeline
@@ -56,6 +57,7 @@ __all__ = [
     "MeshConfig",
     "BoundaryConfig",
     "VisualizationConfig",
+    "ToolsConfig",
     "load_config",
     "create_uniform_grid_config",
     "create_cfd_grading_config",
