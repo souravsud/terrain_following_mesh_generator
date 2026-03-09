@@ -1,6 +1,8 @@
+import sys
 import numpy as np
 import os
 from datetime import datetime
+from pathlib import Path
 import json
 from scipy.ndimage import gaussian_filter
 
@@ -76,26 +78,77 @@ def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
     
     return smoothed
 
+def _collect_package_versions() -> dict:
+    """Return version strings for key Python packages used by the pipeline."""
+    versions = {}
+    for pkg in ("numpy", "scipy", "pyvista", "vtk", "rasterio", "pyproj"):
+        try:
+            mod = __import__(pkg)
+            if pkg == "vtk":
+                versions[pkg] = mod.vtkVersion.GetVTKVersion()
+            else:
+                versions[pkg] = getattr(mod, "__version__", None)
+        except (ImportError, AttributeError):
+            pass
+    return versions
+
+
 def write_metadata(**kwargs):
-    """Save pipeline metadata to JSON file"""
-    
+    """Save pipeline metadata to JSON file.
+
+    Paths to local input and output files are intentionally *not* stored in
+    the metadata so that the file is meaningful outside the generating
+    machine (FAIR data principle of re-usability).  Instead, only filenames
+    (basenames) and output-relative paths are recorded.
+    """
+
+    # --- Environment / reproducibility information ---
+    python_ver = (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+    tools_config = kwargs.get("tools_config")
+    openfoam_version = tools_config.openfoam_version if tools_config else None
+
+    # --- Path helpers (basename / relative only) ---
+    dem_filename = Path(kwargs["dem_path"]).name
+    roughness_filename = (
+        Path(kwargs["rmap_path"]).name if kwargs["rmap_path"] else None
+    )
+    vtk_filename = Path(kwargs["vtk_path"]).name
+    metadata_filename = Path(kwargs["metadata_path"]).name
+
+    blockmesh_rel = None
+    if kwargs.get("blockmesh_path"):
+        try:
+            blockmesh_rel = str(
+                Path(kwargs["blockmesh_path"]).relative_to(kwargs["output_dir"])
+            )
+        except ValueError:
+            # Fallback: just the filename if relative_to fails
+            blockmesh_rel = Path(kwargs["blockmesh_path"]).name
+
     metadata = {
         "pipeline_info": {
             "timestamp": datetime.now().isoformat(),
         },
-        
-        "input_files": {
-            "dem_path": str(kwargs['dem_path']),
-            "roughness_path": str(kwargs['rmap_path']) if kwargs['rmap_path'] else None
+
+        "environment": {
+            "python_version": python_ver,
+            "openfoam_version": openfoam_version,
+            "package_versions": _collect_package_versions(),
         },
-        
+
+        "input_data": {
+            "dem_filename": dem_filename,
+            "roughness_filename": roughness_filename,
+        },
+
         "output_files": {
-            "output_directory": str(kwargs['output_dir']),
-            "vtk_mesh": str(kwargs['vtk_path']),
-            "blockmesh_dict": str(kwargs['blockmesh_path']) if kwargs['blockmesh_path'] else None,
-            "metadata_file": str(kwargs['metadata_path'])
+            "vtk_mesh": vtk_filename,
+            "blockmesh_dict": blockmesh_rel,
+            "metadata_file": metadata_filename,
         },
-        
+
         "configurations": {
             "terrain": {
                 "center_lat": kwargs['terrain_config'].center_lat,
@@ -105,14 +158,14 @@ def write_metadata(**kwargs):
                 "rotation_deg": kwargs['terrain_config'].rotation_deg,
                 "smoothing_sigma": kwargs['terrain_config'].smoothing_sigma
             },
-            
+
             "grid": {
                 "nx": kwargs['grid_config'].nx,
                 "ny": kwargs['grid_config'].ny,
                 "x_grading": kwargs['grid_config'].x_grading,
                 "y_grading": kwargs['grid_config'].y_grading
             },
-            
+
             "mesh": {
                 "domain_height": kwargs['mesh_config'].domain_height,
                 "min_terrain_elevation": kwargs['min_elevation'],
@@ -121,7 +174,7 @@ def write_metadata(**kwargs):
                 "z_grading": kwargs['mesh_config'].z_grading,
                 "patch_types": kwargs['mesh_config'].patch_types
             } if kwargs['mesh_config'] else None,
-            
+
             "boundary": {
                 "aoi_fraction": kwargs['boundary_config'].aoi_fraction,
                 "boundary_mode": kwargs['boundary_config'].boundary_mode,
@@ -135,7 +188,7 @@ def write_metadata(**kwargs):
                 "boundary_flatness_mode": kwargs['boundary_config'].boundary_flatness_mode,
                 "uniform_elevation": kwargs['boundary_config'].uniform_elevation
             },
-            
+
             "visualization": {
                 "create_plots": kwargs['visualization_config'].create_plots,
                 "show_grid_lines": kwargs['visualization_config'].show_grid_lines,
@@ -144,19 +197,19 @@ def write_metadata(**kwargs):
                 "dpi": kwargs['visualization_config'].dpi
             }
         },
-        
+
         "processing_results": {
             "coordinate_system": {
                 "crs": str(kwargs['crs']),
                 "pixel_resolution": kwargs['pixel_res'],
                 "transform": list(kwargs['transform']) if hasattr(kwargs['transform'], '__iter__') else str(kwargs['transform'])
             },
-            
+
             "elevation_statistics": {
                 "original": get_array_stats(kwargs['elevation_data']),
                 "treated": get_array_stats(kwargs['treated_elevation'])
             },
-            
+
             "grid_statistics": {
                 "number_of_points": kwargs['grid'].GetNumberOfPoints() if hasattr(kwargs['grid'], 'GetNumberOfPoints') else None,
                 "number_of_cells": kwargs['grid'].GetNumberOfCells() if hasattr(kwargs['grid'], 'GetNumberOfCells') else None,
@@ -164,7 +217,7 @@ def write_metadata(**kwargs):
             }
         }
     }
-    
+
     # Save to file
     with open(kwargs['metadata_path'], 'w') as f:
         json.dump(metadata, f, indent=2, default=str)

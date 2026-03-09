@@ -44,3 +44,9 @@ visualization:
   save_high_res: true
   plot_format: png
   dpi: 150
+# Tool versions for FAIR data reproducibility.
+# Python and Python-package versions are detected automatically.
+# Set openfoam_version to the release string used for this case,
+# e.g. "v2312" or "10".  Leave as null if not applicable.
+tools:
+  openfoam_version: null
