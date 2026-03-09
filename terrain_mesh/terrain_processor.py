@@ -51,7 +51,7 @@ class TerrainProcessor:
     
     def extract_rotated_terrain(
         self, dem_path: str, config: TerrainConfig
-    ) -> Tuple[np.ndarray, object, CRS, Tuple[float, float], np.ndarray, Tuple[float, float]]:
+    ) -> Tuple[np.ndarray, float, object, CRS, Tuple[float, float], np.ndarray, Tuple[float, float]]:
         """Extract and process terrain elevation data.
         
         This method:
@@ -67,6 +67,7 @@ class TerrainProcessor:
         Returns:
             Tuple containing:
             - elevation_data: 2D array of elevation values (meters)
+            - min_elevation: Minimum terrain elevation across the domain (meters ASL)
             - transform: Affine transform for geospatial coordinates
             - crs: Coordinate reference system
             - pixel_res: Pixel resolution (x_res, y_res) in meters
@@ -115,7 +116,9 @@ class TerrainProcessor:
                 sigma=config.smoothing_sigma
             )
         
-        return elevation_data, transform, crs, pixel_res, crop_mask, center_utm
+        min_elevation = np.nanmin(elevation_data)
+        
+        return elevation_data, min_elevation, transform, crs, pixel_res, crop_mask, center_utm
 
     def extract_rotated_rmap(self, rmap_path: str, config: TerrainConfig) -> Tuple[np.ndarray, object]:
         """Extract roughness map using same parameters as DEM.

@@ -120,6 +120,9 @@ class MeshConfig:
                   Format: [(length_fraction, cell_fraction, expansion_ratio), ...]
         total_z_cells: Number of cells in vertical direction
         terrain_normal_first_layer: If True, first layer follows terrain normal
+        adjust_ceiling_for_terrain: If True, raises the domain ceiling by the minimum terrain
+                    elevation so the effective air-column height above terrain remains constant
+                    regardless of the overall ASL altitude of the site (AGL behaviour)
         patch_types: Dictionary mapping boundary names to OpenFOAM patch types.
                     Defaults: ground=wall, sky=patch, inlet=patch, outlet=patch, sides=patch
         extract_inlet_face_info: If True, extract inlet face information for ABL setup
@@ -133,6 +136,7 @@ class MeshConfig:
     z_grading: Optional[List[Tuple[float, float, float]]] = None
     total_z_cells: Optional[int] = None
     terrain_normal_first_layer: bool = False
+    adjust_ceiling_for_terrain: bool = False
     
     patch_types: Optional[Dict[str, str]] = None
     extract_inlet_face_info: bool = True
