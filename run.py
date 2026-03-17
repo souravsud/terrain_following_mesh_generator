@@ -114,13 +114,12 @@ def main():
         sys.exit(1)
     
     # Determine paths (command line overrides hardcoded defaults)
-    # NOTE: Update these paths for your environment or use command-line arguments
+    # NOTE: Update default_dem_path for your environment or use --dem on the command line
     default_dem_path = "path/to/terrain.tif"
-    default_rmap_path = "path/to/roughness.tif"
     default_output_dir = "./output"
-    
+
     dem_path = args.dem if args.dem else default_dem_path
-    rmap_path = args.rmap if args.rmap else default_rmap_path
+    rmap_path = args.rmap  # None unless explicitly provided via --rmap
     output_dir = args.output if args.output else default_output_dir
     
     # Check if DEM file exists
