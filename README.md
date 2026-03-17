@@ -57,6 +57,27 @@ conda env create -f environment.yml
 conda activate tfmesh
 ```
 
+### 3. Install the package
+
+Install as a package so it can be imported from any script or project:
+
+```bash
+# Standard install
+pip install .
+
+# Editable install (recommended during development -- changes to source take effect immediately)
+pip install -e .
+```
+
+After installation, `terrain_mesh` is importable from anywhere:
+
+```python
+import terrain_mesh as tm
+
+grid_config = tm.create_uniform_grid_config(nx=200, ny=200)
+pipeline = tm.TerrainMeshPipeline()
+```
+
 ## Usage
 
 ### Quick Start

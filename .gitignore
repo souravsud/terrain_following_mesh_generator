@@ -5,6 +5,11 @@ __pycache__/
 *.so
 **/__pycache__/
 
+# Build / packaging artifacts
+*.egg-info/
+dist/
+build/
+
 # Virtual environments
 venv/
 ENV/
