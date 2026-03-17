@@ -244,6 +244,7 @@ class TerrainMeshPipeline:
                 transform=transform,
                 crs=crs,
                 min_elevation=min_elevation,
+                centre_utm=centre_utm,
                 pixel_res=pixel_res,
                 grid=grid,
                 vtk_path=vtk_path,

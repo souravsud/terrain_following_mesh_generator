@@ -78,11 +78,7 @@ def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
     return smoothed
 
 def write_metadata(**kwargs):
-    """Save pipeline metadata to a FAIR-compliant JSON file.
-
-    Input file paths are recorded as filenames only (not full paths) so the
-    metadata remains valid regardless of where the data is hosted.  Output
-    file paths are stored relative to the output directory for the same reason.
+    """Save pipeline metadata to a JSON file.
     """
     # Delay import to avoid circular imports at module level
     from terrain_mesh import __version__
@@ -103,6 +99,7 @@ def write_metadata(**kwargs):
             return Path(path).name
 
     metadata = {
+        "timestamp": datetime.now().isoformat(),
         "software": {
             "name": "terrain_following_mesh_generator",
             "version": __version__,
@@ -111,16 +108,6 @@ def write_metadata(**kwargs):
                 "atmospheric boundary layer (ABL) simulations."
             ),
             "repository": "https://github.com/souravsud/terrain_following_mesh_generator",
-        },
-
-        "pipeline_info": {
-            "timestamp": datetime.now().isoformat(),
-            "description": (
-                "Metadata for a terrain-following mesh generated from Digital Elevation "
-                "Model (DEM) data. This file documents all configuration parameters and "
-                "processing statistics required to understand, reproduce, and reuse the "
-                "generated mesh data in compliance with FAIR data principles."
-            ),
         },
 
         "input_files": {
@@ -132,23 +119,14 @@ def write_metadata(**kwargs):
             "vtk_mesh": _relative(kwargs['vtk_path']),
             "blockmesh_dict": _relative(kwargs['blockmesh_path']),
             "metadata_file": _relative(kwargs['metadata_path']),
-            "descriptions": {
-                "vtk_mesh": (
-                    "Structured terrain-following grid in VTK format, "
-                    "compatible with PyVista and ParaView."
-                ),
-                "blockmesh_dict": (
-                    "OpenFOAM blockMeshDict file; run 'blockMesh' inside the "
-                    "output directory to generate the computational mesh."
-                ),
-                "metadata_file": "This metadata file in JSON format.",
-            },
         },
 
         "configurations": {
             "terrain": {
                 "center_lat": kwargs['terrain_config'].center_lat,
                 "center_lon": kwargs['terrain_config'].center_lon,
+                "easting": kwargs['centre_utm'][1] ,
+                "northing": kwargs['centre_utm'][0],
                 "center_utm": kwargs['terrain_config'].center_coordinates,
                 "crop_size_km": kwargs['terrain_config'].crop_size_km,
                 "rotation_deg": kwargs['terrain_config'].rotation_deg,
