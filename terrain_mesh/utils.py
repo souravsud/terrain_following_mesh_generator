@@ -2,6 +2,7 @@ import numpy as np
 import os
 from datetime import datetime
 import json
+from pathlib import Path
 from scipy.ndimage import gaussian_filter
 
 def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False, geographic=False):
@@ -77,51 +78,77 @@ def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
     return smoothed
 
 def write_metadata(**kwargs):
-    """Save pipeline metadata to JSON file"""
-    
+    """Save pipeline metadata to a JSON file.
+    """
+    # Delay import to avoid circular imports at module level
+    from terrain_mesh import __version__
+
+    output_dir = Path(kwargs['output_dir'])
+
+    # Store only the filename for machine-specific input paths
+    dem_filename = Path(kwargs['dem_path']).name if kwargs['dem_path'] else None
+    roughness_filename = Path(kwargs['rmap_path']).name if kwargs['rmap_path'] else None
+
+    def _relative(path):
+        """Return path relative to output_dir, or just the filename if that fails."""
+        if path is None:
+            return None
+        try:
+            return str(Path(path).relative_to(output_dir))
+        except ValueError:
+            return Path(path).name
+
     metadata = {
-        "pipeline_info": {
-            "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now().isoformat(),
+        "software": {
+            "name": "terrain_following_mesh_generator",
+            "version": __version__,
+            "description": (
+                "Structured terrain-following mesh generator for OpenFOAM "
+                "atmospheric boundary layer (ABL) simulations."
+            ),
+            "repository": "https://github.com/souravsud/terrain_following_mesh_generator",
         },
-        
+
         "input_files": {
-            "dem_path": str(kwargs['dem_path']),
-            "roughness_path": str(kwargs['rmap_path']) if kwargs['rmap_path'] else None
+            "dem_filename": dem_filename,
+            "roughness_filename": roughness_filename,
         },
-        
+
         "output_files": {
-            "output_directory": str(kwargs['output_dir']),
-            "vtk_mesh": str(kwargs['vtk_path']),
-            "blockmesh_dict": str(kwargs['blockmesh_path']) if kwargs['blockmesh_path'] else None,
-            "metadata_file": str(kwargs['metadata_path'])
+            "vtk_mesh": _relative(kwargs['vtk_path']),
+            "blockmesh_dict": _relative(kwargs['blockmesh_path']),
+            "metadata_file": _relative(kwargs['metadata_path']),
         },
-        
+
         "configurations": {
             "terrain": {
                 "center_lat": kwargs['terrain_config'].center_lat,
                 "center_lon": kwargs['terrain_config'].center_lon,
+                "easting": kwargs['centre_utm'][1] ,
+                "northing": kwargs['centre_utm'][0],
                 "center_utm": kwargs['terrain_config'].center_coordinates,
                 "crop_size_km": kwargs['terrain_config'].crop_size_km,
                 "rotation_deg": kwargs['terrain_config'].rotation_deg,
-                "smoothing_sigma": kwargs['terrain_config'].smoothing_sigma
+                "smoothing_sigma": kwargs['terrain_config'].smoothing_sigma,
             },
-            
+
             "grid": {
                 "nx": kwargs['grid_config'].nx,
                 "ny": kwargs['grid_config'].ny,
                 "x_grading": kwargs['grid_config'].x_grading,
-                "y_grading": kwargs['grid_config'].y_grading
+                "y_grading": kwargs['grid_config'].y_grading,
             },
-            
+
             "mesh": {
-                "domain_height": kwargs['mesh_config'].domain_height,
-                "min_terrain_elevation": kwargs['min_elevation'],
+                "domain_height_m": kwargs['mesh_config'].domain_height,
+                "min_terrain_elevation_m": kwargs['min_elevation'],
                 "terrain_normal_first_layer": kwargs['mesh_config'].terrain_normal_first_layer,
                 "total_z_cells": kwargs['mesh_config'].total_z_cells,
                 "z_grading": kwargs['mesh_config'].z_grading,
-                "patch_types": kwargs['mesh_config'].patch_types
+                "patch_types": kwargs['mesh_config'].patch_types,
             } if kwargs['mesh_config'] else None,
-            
+
             "boundary": {
                 "aoi_fraction": kwargs['boundary_config'].aoi_fraction,
                 "boundary_mode": kwargs['boundary_config'].boundary_mode,
@@ -133,38 +160,60 @@ def write_metadata(**kwargs):
                 "max_kernel_size": kwargs['boundary_config'].max_kernel_size,
                 "progression_rate": kwargs['boundary_config'].progression_rate,
                 "boundary_flatness_mode": kwargs['boundary_config'].boundary_flatness_mode,
-                "uniform_elevation": kwargs['boundary_config'].uniform_elevation
+                "uniform_elevation": kwargs['boundary_config'].uniform_elevation,
             },
-            
+
             "visualization": {
                 "create_plots": kwargs['visualization_config'].create_plots,
                 "show_grid_lines": kwargs['visualization_config'].show_grid_lines,
                 "save_high_res": kwargs['visualization_config'].save_high_res,
                 "plot_format": kwargs['visualization_config'].plot_format,
-                "dpi": kwargs['visualization_config'].dpi
-            }
+                "dpi": kwargs['visualization_config'].dpi,
+            },
         },
-        
+
         "processing_results": {
+            "geographic_coverage": {
+                "center_lat_deg": kwargs['terrain_config'].center_lat,
+                "center_lon_deg": kwargs['terrain_config'].center_lon,
+                "domain_size_km": kwargs['terrain_config'].crop_size_km,
+                "wind_direction_deg": kwargs['terrain_config'].rotation_deg,
+            },
+
             "coordinate_system": {
                 "crs": str(kwargs['crs']),
-                "pixel_resolution": kwargs['pixel_res'],
-                "transform": list(kwargs['transform']) if hasattr(kwargs['transform'], '__iter__') else str(kwargs['transform'])
+                "pixel_resolution_m": kwargs['pixel_res'],
+                "transform": (
+                    list(kwargs['transform'])
+                    if hasattr(kwargs['transform'], '__iter__')
+                    else str(kwargs['transform'])
+                ),
             },
-            
+
             "elevation_statistics": {
+                "units": "meters above mean sea level (MSL)",
                 "original": get_array_stats(kwargs['elevation_data']),
-                "treated": get_array_stats(kwargs['treated_elevation'])
+                "treated": get_array_stats(kwargs['treated_elevation']),
             },
-            
+
             "grid_statistics": {
-                "number_of_points": kwargs['grid'].GetNumberOfPoints() if hasattr(kwargs['grid'], 'GetNumberOfPoints') else None,
-                "number_of_cells": kwargs['grid'].GetNumberOfCells() if hasattr(kwargs['grid'], 'GetNumberOfCells') else None,
-                "bounds": list(kwargs['grid'].GetBounds()) if hasattr(kwargs['grid'], 'GetBounds') else None
-            }
-        }
+                "units": "meters",
+                "number_of_points": (
+                    kwargs['grid'].GetNumberOfPoints()
+                    if hasattr(kwargs['grid'], 'GetNumberOfPoints') else None
+                ),
+                "number_of_cells": (
+                    kwargs['grid'].GetNumberOfCells()
+                    if hasattr(kwargs['grid'], 'GetNumberOfCells') else None
+                ),
+                "bounds": (
+                    list(kwargs['grid'].GetBounds())
+                    if hasattr(kwargs['grid'], 'GetBounds') else None
+                ),
+            },
+        },
     }
-    
+
     # Save to file
     with open(kwargs['metadata_path'], 'w') as f:
         json.dump(metadata, f, indent=2, default=str)
