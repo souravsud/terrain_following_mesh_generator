@@ -113,19 +113,21 @@ def main():
         print(f"Error loading configuration: {e}")
         sys.exit(1)
     
-    # Determine paths (command line overrides hardcoded defaults)
-    # NOTE: Update default_dem_path for your environment or use --dem on the command line
-    default_dem_path = "path/to/terrain.tif"
-    default_output_dir = "./output"
+    # Determine paths
+    if not args.dem:
+        print("Error: No DEM file specified.")
+        print("Please provide a path to your terrain file with --dem.")
+        print("Example: python run.py --dem path/to/terrain.tif --config terrain_config.yaml")
+        sys.exit(1)
 
-    dem_path = args.dem if args.dem else default_dem_path
+    dem_path = args.dem
     rmap_path = args.rmap  # None unless explicitly provided via --rmap
-    output_dir = args.output if args.output else default_output_dir
-    
+    output_dir = args.output if args.output else "./output"
+
     # Check if DEM file exists
     if not Path(dem_path).exists():
         print(f"Error: DEM file not found: {dem_path}")
-        print(f"Please specify a valid DEM file with --dem")
+        print("Please specify a valid DEM file with --dem.")
         sys.exit(1)
     
     # Check if roughness map exists (optional)

@@ -48,6 +48,7 @@ class TerrainProcessor:
         self.centre_utm = None
         self.original_crs = None
         self.expanded_bounds = None
+        self.utm_crs = None  # Auto-detected UTM CRS based on center coordinates
     
     def extract_rotated_terrain(
         self, dem_path: str, config: TerrainConfig
@@ -98,6 +99,10 @@ class TerrainProcessor:
                 center_utm = self.latlon_to_utm(config.center_lat, config.center_lon, utm_crs)
         
         self.centre_utm = center_utm
+        
+        # Store the UTM CRS derived from config coordinates so format adapters
+        # (DAT, NetCDF) use the correct zone for the site rather than a hardcoded one.
+        self.utm_crs = self.get_utm_crs(config.center_lon, config.center_lat)
         
         # Crop using master function
         elevation_data, transform, crs, pixel_res, crop_mask = self.crop_and_rotate_raster(
@@ -317,9 +322,9 @@ class TerrainProcessor:
         
         transform = from_bounds(x_min, y_min, x_max, y_max, cols, rows)
         
-        # Assume UTM Zone (you can make this configurable)
-        # For now, use a placeholder - will be overridden by actual UTM
-        utm_crs = CRS.from_epsg(32610)  # Adjust as needed
+        # Use auto-detected UTM CRS derived from the site's center coordinates.
+        # Falls back to UTM Zone 10N only when called without prior terrain extraction.
+        utm_crs = self.utm_crs if self.utm_crs is not None else CRS.from_epsg(32610)
         
         memfile = MemoryFile()
         with memfile.open(
@@ -360,8 +365,9 @@ class TerrainProcessor:
         
         transform = from_bounds(x_min, y_min, x_max, y_max, cols, rows)
         
-        # Use placeholder UTM CRS
-        utm_crs = CRS.from_epsg(32610)  # Adjust as needed
+        # Use auto-detected UTM CRS derived from the site's center coordinates.
+        # Falls back to UTM Zone 10N only when called without prior terrain extraction.
+        utm_crs = self.utm_crs if self.utm_crs is not None else CRS.from_epsg(32610)
         
         memfile = MemoryFile()
         with memfile.open(

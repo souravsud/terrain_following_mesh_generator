@@ -1,4 +1,11 @@
+# Terrain Mesh Configuration
+# ============================================================
+# Update center_lat / center_lon to your site's coordinates.
+# All other values are sensible defaults to start from.
+# ============================================================
+
 terrain:
+  # Example coordinates (Portalegre, Portugal) -- replace with your site's lat/lon
   center_lat: 39.71121111
   center_lon: -7.73483333
   crop_size_km: 30

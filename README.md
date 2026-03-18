@@ -88,15 +88,18 @@ The simplest way to use the tool is with the command-line interface:
 # Show help and available options
 python run.py --help
 
-# Run with default config and custom paths
+# Run with your DEM file and config (--dem is required)
 python run.py --config terrain_config.yaml --dem terrain_data.tif --output ./output
 
 # Include roughness map for z0 field generation
 python run.py --dem terrain.tif --rmap roughness.tif --output ./output
 
 # Enable verbose logging for debugging
-python run.py --verbose
+python run.py --dem terrain.tif --verbose
 ```
+
+> **Note**: `--dem` is required. There is no built-in DEM download — you must supply
+> your own GeoTIFF (or DAT / NetCDF) file for the area of interest.
 
 ### Advanced Usage
 
@@ -222,7 +225,8 @@ Configure the mesh generation using a YAML file. Below are two example configura
 ```yaml
 # config_simple.yaml
 terrain:
-  center_lat: 39.71121111
+  # Replace with your site's coordinates
+  center_lat: 39.71121111   # Example: Portalegre, Portugal
   center_lon: -7.73483333
   crop_size_km: 25
   rotation_deg: 0
@@ -241,7 +245,8 @@ mesh:
 ```yaml
 # config_advanced.yaml
 terrain:
-  center_lat: 39.71121111
+  # Replace with your site's coordinates
+  center_lat: 39.71121111   # Example: Portalegre, Portugal
   center_lon: -7.73483333
   crop_size_km: 25
   rotation_deg: 45
