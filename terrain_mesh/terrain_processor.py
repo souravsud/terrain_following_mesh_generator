@@ -14,6 +14,7 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
+from rasterio.warp import calculate_default_transform, reproject, Resampling
 from pyproj import Transformer
 import warnings
 
@@ -207,9 +208,26 @@ class TerrainProcessor:
                 return self._crop_raster_core(src, center_utm, crop_size_m, rotation_deg)
         
         elif suffix in ['.tif', '.tiff']:
-            # GeoTIFF - direct processing (already in UTM from downloader)
             with rasterio.open(str(raster_path)) as src:
-                return self._crop_raster_core(src, center_utm, crop_size_m, rotation_deg)
+                if src.crs is not None and not src.crs.is_projected:
+                    # Geographic CRS detected (e.g. WGS84 EPSG:4326).
+                    # The crop logic works in UTM metres, so reproject first.
+                    if self.utm_crs is None:
+                        raise ValueError(
+                            "Cannot reproject geographic GeoTIFF: UTM CRS has not "
+                            "been determined yet. Call extract_rotated_terrain() "
+                            "before processing roughness maps, or supply a GeoTIFF "
+                            "that is already projected to UTM."
+                        )
+                    print(
+                        f"  Geographic CRS detected ({src.crs.to_string()}). "
+                        f"Reprojecting to {self.utm_crs.to_string()}..."
+                    )
+                    memfile = self._reproject_to_utm(src, self.utm_crs)
+                    with memfile.open() as utm_src:
+                        return self._crop_raster_core(utm_src, center_utm, crop_size_m, rotation_deg)
+                else:
+                    return self._crop_raster_core(src, center_utm, crop_size_m, rotation_deg)
         
         else:
             raise ValueError(f"Unsupported raster format: {suffix}")
@@ -384,6 +402,52 @@ class TerrainProcessor:
         ds.close()
         return memfile
     
+    def _reproject_to_utm(self, src, target_crs: CRS) -> MemoryFile:
+        """Reproject a rasterio dataset to a UTM CRS in memory.
+        
+        Used to transparently handle GeoTIFF files that arrive in a geographic
+        CRS (e.g. WGS84 EPSG:4326) instead of a projected UTM CRS.
+        
+        Args:
+            src: Open rasterio DatasetReader in any CRS
+            target_crs: Target projected CRS (should be the site's UTM zone)
+            
+        Returns:
+            MemoryFile containing the reprojected single-band raster
+        """
+        transform, width, height = calculate_default_transform(
+            src.crs, target_crs, src.width, src.height, *src.bounds
+        )
+
+        src_dtype = src.dtypes[0]
+
+        # Preserve nodata from source; fall back to NaN for floating-point data
+        nodata = src.nodata
+        if nodata is None and np.issubdtype(np.dtype(src_dtype), np.floating):
+            nodata = np.nan
+
+        memfile = MemoryFile()
+        with memfile.open(
+            driver='GTiff',
+            height=height,
+            width=width,
+            count=1,
+            dtype=src_dtype,
+            crs=target_crs,
+            transform=transform,
+            nodata=nodata,
+        ) as dst:
+            reproject(
+                source=rasterio.band(src, 1),
+                destination=rasterio.band(dst, 1),
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=transform,
+                dst_crs=target_crs,
+                resampling=Resampling.bilinear,
+            )
+        return memfile
+
     def get_utm_crs(self, longitude: float, latitude: float) -> CRS:
         """Determine the appropriate UTM CRS for given coordinates.
         
@@ -391,16 +455,61 @@ class TerrainProcessor:
         Northern hemisphere uses EPSG codes 32601-32660.
         Southern hemisphere uses EPSG codes 32701-32760.
         
+        Special handling:
+        - Longitude 180° is clamped to zone 60 (same meridian as -180°).
+        - Norway zone 32V exception (56°N–64°N, 3°E–12°E → zone 32 instead of 31).
+        - Svalbard zone X exceptions (72°N–84°N → zones 31/33/35/37 only).
+        - Polar regions (lat > 84°N or lat < -80°S) raise ValueError because UTM
+          is not defined there.
+        
         Args:
             longitude: Longitude in decimal degrees (-180 to 180)
             latitude: Latitude in decimal degrees (-90 to 90)
             
         Returns:
             rasterio CRS object for the appropriate UTM zone
+            
+        Raises:
+            ValueError: If coordinates are in a polar region where UTM is undefined
         """
-        # Calculate UTM zone
-        utm_zone = int((longitude + 180) / UTM_ZONE_WIDTH) + 1
-        
+        # Reject polar regions where UTM is not defined
+        if latitude > 84.0:
+            raise ValueError(
+                f"Latitude {latitude}° is above 84°N. UTM is not defined for polar "
+                "regions. Use a polar stereographic projection instead."
+            )
+        if latitude < -80.0:
+            raise ValueError(
+                f"Latitude {latitude}° is below 80°S. UTM is not defined for polar "
+                "regions. Use a polar stereographic projection instead."
+            )
+
+        # Calculate base UTM zone.
+        # The formula int((lon + 180) / 6) + 1 naturally gives zone 1 for
+        # lon = -180 (same meridian as +180, i.e. the date line).
+        # Clamping to 60 ensures lon = 180 also maps to zone 60 instead of
+        # producing the non-existent zone 61.
+        utm_zone = min(int((longitude + 180) / UTM_ZONE_WIDTH) + 1, 60)
+
+        # Norway zone 32V exception (UTM standard §1.1):
+        # In band V (56°N–64°N), the region 3°E–12°E uses zone 32 rather than
+        # the standard split into zones 31 (0°–6°E) and 32 (6°–12°E).
+        if 56.0 <= latitude < 64.0 and 3.0 <= longitude < 12.0:
+            utm_zone = 32
+
+        # Svalbard zone X exceptions (72°N–84°N):
+        # Zones 32, 34, and 36 do not exist in this latitude band; instead the
+        # adjacent odd zones are widened to 12° each.
+        elif 72.0 <= latitude <= 84.0:
+            if longitude < 9.0:
+                utm_zone = 31
+            elif longitude < 21.0:
+                utm_zone = 33
+            elif longitude < 33.0:
+                utm_zone = 35
+            elif longitude < 42.0:
+                utm_zone = 37
+
         # Determine hemisphere
         if latitude >= 0:
             epsg_code = UTM_NORTH_BASE + utm_zone  # Northern hemisphere

@@ -71,6 +71,10 @@ class TerrainConfig:
     def __post_init__(self):
         if self.crop_size_km <= 0:
             raise ValueError(f"Crop size must be positive, got {self.crop_size_km}")
+        if not (-90.0 <= self.center_lat <= 90.0):
+            raise ValueError(f"Latitude must be between -90 and 90, got {self.center_lat}")
+        if not (-180.0 <= self.center_lon <= 180.0):
+            raise ValueError(f"Longitude must be between -180 and 180, got {self.center_lon}")
 
 
 @dataclass
