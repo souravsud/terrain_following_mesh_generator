@@ -19,7 +19,7 @@ def main():
     
     # Terrain configuration with rotation
     terrain_config = tm.TerrainConfig(
-        # Replace with your site's coordinates (example: Portalegre, Portugal)
+        # Replace with your site's coordinates (example: Perdigão, Portugal)
         center_lat=39.71121111,
         center_lon=-7.73483333,
         crop_size_km=25,

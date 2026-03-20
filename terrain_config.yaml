@@ -7,12 +7,12 @@
 # ============================================================
 
 terrain:
-  # Optional: explicit site centre (Portalegre, Portugal).
+  # Optional: explicit site centre (Perdigão, Portugal).
   # Remove or comment out these two lines to auto-detect from the DEM.
   center_lat: 39.71121111
   center_lon: -7.73483333
   crop_size_km: 30
-  rotation_deg: 225
+  rotation_deg: 0
   smoothing_sigma: 0
   center_coordinates: false
   
@@ -32,7 +32,7 @@ mesh:
   domain_height: 3000.0
   total_z_cells: 91
   terrain_normal_first_layer: true
-  adjust_ceiling_for_terrain: false
+  adjust_ceiling_for_terrain: true
   z_grading:
     - [1.0, 1.0, 62.4]
 

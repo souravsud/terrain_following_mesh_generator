@@ -1,34 +1,23 @@
 # Terrain-Following Mesh Generator for Atmospheric Simulations (OpenFOAM)
 
-This tool generates a **structured, terrain-following orthogonal mesh** for atmospheric simulations in [OpenFOAM](https://openfoam.org/).  
-It downloads terrain elevation data (DEM) and optional surface roughness maps, then produces a `blockMeshDict` and aerodynamic roughness field (`z0`) for high-fidelity wind flow simulations.
+This tool generates a **structured, terrain-following orthogonal mesh** for atmospheric simulations in [OpenFOAM](https://www.openfoam.com/).  
+It pre-processes elevation data (DEM) and optional surface roughness maps, then produces a `blockMeshDict` and aerodynamic roughness field (`z0`) for high-fidelity wind flow simulations.
 
 ---
 
 ## Features
-- **Automated DEM download** from global elevation datasets (GLO-30, SRTM, etc.)
 - **Automatic surface roughness mapping** from ESA WorldCover land classification
-- **UTM reprojection** at download time for optimal processing performance
 - **Structured, graded surface mesh** generation with user-defined resolution and grading
 - **Terrain-following vertical extrusion** to specified ceiling height
-- **Aerodynamic roughness field (`z0`) generation** for OpenFOAM ABL simulations
 - **Boundary treatment** to minimize artificial terrain edge effects
 - **Multi-block grading** support for refined regions of interest
-- **Batch processing** for multiple locations via CSV input
 - Outputs ready-to-use `system/blockMeshDict` and `0/include/z0Values` files
+- Quick mesh sanity checks using mesh_visualiser
 
 ---
 
 ## Workflow
 
-### Phase 1: Download Terrain & Roughness Data
-1. Specify location(s) via **lat/lon coordinates** (single location or CSV batch)
-2. Tool **downloads DEM tiles** and **stitches** them into domain-sized GeoTIFF
-3. (Optional) Downloads **ESA WorldCover** land classification and converts to **z0 roughness values**
-4. **Reprojects** both DEM and roughness map to **UTM** (meters) for processing efficiency
-5. Saves **GeoTIFF files** and **metadata JSON** to location-specific folders
-
-### Phase 2: Generate Mesh
 1. Load **UTM-projected DEM** (and optional roughness map)
 2. **Extract and rotate** terrain region based on config
 3. Apply **boundary treatment** (smoothing/flattening at edges)
@@ -107,18 +96,12 @@ For programmatic usage, see the examples in the `examples/` directory:
 - `examples/simple_example.py` - Basic usage with uniform mesh
 - `examples/advanced_example.py` - Advanced usage with grading and boundary treatment
 
-### Using Your Own DEM Files
+### Inputs
 
-If you have your own DEM files:
+Currently the tool supports DEM data in the following formats:
 - **GeoTIFF files**: Supported directly (will be reprojected to UTM if needed)
 - **DAT files**: Custom format with UTM coordinates (debug/testing)
 - **NetCDF files**: With 2D coordinate arrays (debug/testing)
-
-Then run:
-
-```bash
-python run.py --config terrain_config.yaml --dem your_terrain.tif --output ./output
-```
 
 ## Examples
 
@@ -132,24 +115,24 @@ See the `examples/` directory for ready-to-use example scripts:
 ### Configuration Parameters
 
 #### **Terrain Section**
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `center_lat` | float | Center latitude of terrain region | *required* |
-| `center_lon` | float | Center longitude of terrain region | *required* |
-| `center_coordinates` | tuple/null | Override with UTM coordinates `[x, y]` (for advanced use) | `null` |
-| `crop_size_km` | float | Size of terrain region to extract (km) | *required* |
-| `rotation_deg` | float | Rotation angle of domain (degrees, clockwise from North) | `0.0` |
-| `smoothing_sigma` | float | Gaussian smoothing applied to terrain (0=no smoothing) | `2.0` |
+| Parameter | Type | Description | Required | Default |
+|-----------|------|-------------|----------|---------|
+| `center_lat` | float | Center latitude of terrain region | No | `null` (auto-detect from GeoTIFF when possible) |
+| `center_lon` | float | Center longitude of terrain region | No | `null` (auto-detect from GeoTIFF when possible) |
+| `center_coordinates` | bool | Centres the coordinate system at map center | No | `false` |
+| `crop_size_km` | float | Size of terrain region to extract (km) | Yes | No default |
+| `rotation_deg` | float | Rotation angle of domain (degrees, clockwise from North) | Yes | No default|
+| `smoothing_sigma` | float | Gaussian smoothing applied to terrain (0=no smoothing) | No | `0.0` |
 
 **Note**: If using downloaded GeoTIFFs, `center_coordinates` will be auto-loaded from metadata JSON.
 
 #### **Grid Section**
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `nx` | int | Number of cells in x-direction | *required* |
-| `ny` | int | Number of cells in y-direction | *required* |
-| `x_grading` | list | Multi-block grading in x-direction (see format below) | `null` (uniform) |
-| `y_grading` | list | Multi-block grading in y-direction (see format below) | `null` (uniform) |
+| Parameter | Type | Description | Required | Default |
+|-----------|------|-------------|----------|---------|
+| `nx` | int | Number of cells in x-direction | Yes | No default |
+| `ny` | int | Number of cells in y-direction | Yes | No default |
+| `x_grading` | list | Multi-block grading in x-direction (see format below) | No | `null` (uniform) |
+| `y_grading` | list | Multi-block grading in y-direction (see format below) | No | `null` (uniform) |
 
 **Grading Format**: Each grading entry is `[length_fraction, cell_fraction, expansion_ratio]`
 - `length_fraction`: Fraction of domain length for this block
@@ -167,13 +150,13 @@ x_grading:
 ```
 
 #### **Mesh Section**
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `domain_height` | float | Height of computational domain (m) | `1000.0` |
-| `total_z_cells` | int | Total cells in vertical direction | `10` |
-| `z_grading` | list | Vertical grading specification (same format as x/y grading) | `null` (uniform) |
-| `patch_types` | dict | OpenFOAM patch type for each boundary | See below |
-| `extract_inlet_face_info` | bool | Extract inlet face information | `true` |
+| Parameter | Type | Description | Required | Default |
+|-----------|------|-------------|----------|---------|
+| `domain_height` | float | Height of computational domain (m) | No | `4000.0` |
+| `total_z_cells` | int | Total cells in vertical direction | Yes | No default |
+| `z_grading` | list | Vertical grading specification (same format as x/y grading) | No | `null` (uniform) |
+| `patch_types` | dict | OpenFOAM patch type for each boundary | No | See below |
+| `extract_inlet_face_info` | bool | Extract inlet face information | No | `true` |
 
 **Default patch types**:
 ```yaml
@@ -188,111 +171,69 @@ patch_types:
 #### **Boundary Section** (Advanced)
 Controls boundary treatment to reduce artificial terrain effects at domain edges.
 
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `aoi_fraction` | float | Fraction of domain considered as area-of-interest (center region) | `0.4` |
-| `boundary_mode` | str | Treatment mode: `uniform` or `directional` | `uniform` |
-| `flat_boundary_thickness_fraction` | float | Thickness of flattened boundary region (fraction of domain) | `0.1` |
-| `enabled_boundaries` | list | Boundaries to flatten: `[east, west, north, south]` | `[east, west]` |
-| `smoothing_method` | str | Smoothing kernel: `mean`, `gaussian`, or `median` | `mean` |
-| `kernel_progression` | str | How smoothing increases: `exponential` or `linear` | `exponential` |
-| `base_kernel_size` | int | Initial smoothing kernel size | `null` (auto) |
-| `max_kernel_size` | int | Maximum smoothing kernel size | `null` (auto) |
-| `progression_rate` | float | Rate of kernel size increase (for exponential) | `1.5` |
-| `boundary_flatness_mode` | str | Flattening method: `heavy_smooth` or `blend_target` | `heavy_smooth` |
-| `uniform_elevation` | float | Override boundary height (m) | `null` (auto-calculate) |
+| Parameter | Type | Description | Required | Default |
+|-----------|------|-------------|----------|---------|
+| `aoi_fraction` | float | Fraction of domain considered as area-of-interest (center region) | No | `0.4` |
+| `boundary_mode` | str | Treatment mode: `uniform` or `directional` | No | `uniform` |
+| `flat_boundary_thickness_fraction` | float | Thickness of flattened boundary region (fraction of domain) | No | `0.1` |
+| `enabled_boundaries` | list | Boundaries to flatten: `[east, west, north, south]` | No | `[east, west]` |
+| `smoothing_method` | str | Smoothing kernel: `mean`, `gaussian`, or `median` | No | `mean` |
+| `kernel_progression` | str | How smoothing increases: `exponential` or `linear` | No | `exponential` |
+| `base_kernel_size` | int | Initial smoothing kernel size | No | `null` (auto) |
+| `max_kernel_size` | int | Maximum smoothing kernel size | No | `null` (auto) |
+| `progression_rate` | float | Rate of kernel size increase (for exponential) | No | `1.5` |
+| `boundary_flatness_mode` | str | Flattening method: `heavy_smooth` or `blend_target` | No | `heavy_smooth` |
+| `uniform_elevation` | float | Override boundary height (m) | No | `null` (auto-calculate) |
 
 **Boundary modes**:
 - `uniform`: Apply flattening uniformly around entire perimeter
 - `directional`: Apply flattening only to specified boundaries (e.g., inlet/outlet only)
 
 #### **Visualization Section**
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `create_plots` | bool | Generate visualization plots | `true` |
-| `show_grid_lines` | bool | Display grid lines on plots | `true` |
-| `save_high_res` | bool | Save high-resolution plots | `true` |
-| `plot_format` | str | Output format: `png`, `pdf`, `svg` | `png` |
-| `dpi` | int | Plot resolution | `150` |
+| Parameter | Type | Description | Required | Default |
+|-----------|------|-------------|----------|---------|
+| `create_plots` | bool | Generate visualization plots | No | `true` |
+| `show_grid_lines` | bool | Display grid lines on plots | No | `true` |
+| `save_high_res` | bool | Save high-resolution plots | No | `true` |
+| `plot_format` | str | Output format: `png`, `pdf`, `svg` | No | `png` |
+| `dpi` | int | Plot resolution | No | `150` |
 
 ---
 
-### Typical Use Cases
 
-Configure the mesh generation using a YAML file. Below are two example configurations.
+### Demo: Simple Case
 
-### Simple Configuration (Uniform Mesh)
+1. Save this as `config_demo.yaml`:
+
 ```yaml
-# config_simple.yaml
 terrain:
-  # Replace with your site's coordinates
-  center_lat: 39.71121111   # Example: Portalegre, Portugal
+  center_lat: 39.71121111
   center_lon: -7.73483333
   crop_size_km: 25
   rotation_deg: 0
-  smoothing_sigma: 0
-  
+
 grid:
   nx: 200
   ny: 200
-  
+
 mesh:
   domain_height: 3000.0
   total_z_cells: 50
 ```
 
-### Advanced Configuration (Multi-Grading)
-```yaml
-# config_advanced.yaml
-terrain:
-  # Replace with your site's coordinates
-  center_lat: 39.71121111   # Example: Portalegre, Portugal
-  center_lon: -7.73483333
-  crop_size_km: 25
-  rotation_deg: 45
-  smoothing_sigma: 0
-  center_coordinates: false
-  
-grid:
-  nx: 384
-  ny: 384
-  x_grading:
-    - [0.35, 0.12, 0.05]   # [length_fraction, cell_fraction, expansion_ratio]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0]
-  y_grading:
-    - [0.35, 0.12, 0.05]
-    - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0]
-    
-mesh:
-  domain_height: 3000.0
-  total_z_cells: 60
-  z_grading:
-    - [0.033, 0.50, 1.0]   # Near ground refinement
-    - [0.967, 0.50, 100.0] # Expansion to domain top
-  patch_types:
-    ground: wall
-    sky: patch
-    inlet: patch
-    outlet: patch
-    sides: patch
-    
-boundary:
-  aoi_fraction: 0.3
-  boundary_mode: directional
-  flat_boundary_thickness_fraction: 0.08
-  enabled_boundaries: [east, west]
-  smoothing_method: mean
-  kernel_progression: exponential
-  base_kernel_size: 5
-  progression_rate: 10
-  boundary_flatness_mode: blend_target
-  
-visualization:
-  create_plots: true
-  show_grid_lines: true
-  save_high_res: true
-  plot_format: png
-  dpi: 150
+2. Run the pipeline:
+
+```bash
+python run.py --config config_demo.yaml --dem path/to/terrain.tif --output ./output
 ```
+
+### Demo: Ouput
+
+Paste screenshots directly under each heading below.
+
+#### 1) Output figures
+![alt text](examples/sample_Plots/boundary_treatment.png)
+![alt text](examples/sample_Plots/roughness_analysis.png)
+
+#### 2) Sample slice of the mesh generated from the blockMeshDict
+![alt text](examples/sample_Plots/volMeshSlice.png)

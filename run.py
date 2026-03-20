@@ -41,19 +41,19 @@ def parse_args():
         description='Generate terrain-following mesh for OpenFOAM simulations',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Basic usage with default paths
-  python run.py
-  
-  # Specify custom paths
-  python run.py --config my_config.yaml --dem terrain.tif --output ./mesh_output
-  
-  # Include roughness map for z0 field generation
-  python run.py --dem terrain.tif --rmap roughness.tif --output ./output
-  
-  # Enable verbose logging
-  python run.py --verbose
-        """
+        Examples:
+        # Basic usage with default paths
+        python run.py
+        
+        # Specify custom paths
+        python run.py --config my_config.yaml --dem terrain.tif --output ./mesh_output
+        
+        # Include roughness map for z0 field generation
+        python run.py --dem terrain.tif --rmap roughness.tif --output ./output
+        
+        # Enable verbose logging
+        python run.py --verbose
+                """
     )
     
     parser.add_argument(
