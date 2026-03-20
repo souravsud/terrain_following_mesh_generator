@@ -9,7 +9,7 @@ This module provides dataclass-based configuration for:
 """
 
 from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Tuple, Dict, Any, Union
 import yaml
 
 # Constants
@@ -50,30 +50,36 @@ class TerrainConfig:
     """Configuration for terrain extraction and processing.
     
     Attributes:
-        center_lat: Center latitude of terrain region (decimal degrees)
-        center_lon: Center longitude of terrain region (decimal degrees)
         crop_size_km: Size of terrain region to extract (kilometers)
         rotation_deg: Rotation angle clockwise from North (degrees, 0-360)
+        center_lat: Center latitude of terrain region (decimal degrees).
+                    If omitted, the center is automatically derived from the
+                    geographic extent of the DEM file (GeoTIFF only).
+        center_lon: Center longitude of terrain region (decimal degrees).
+                    If omitted, the center is automatically derived from the
+                    geographic extent of the DEM file (GeoTIFF only).
         smoothing_sigma: Gaussian smoothing sigma (0 = no smoothing)
-        center_coordinates: If True, the coordinate system is transformed such that the centre is (0,0)
+        center_coordinates: If True, the coordinate system is transformed such that the center is (0,0)
         
     Raises:
         ValueError: If crop_size_km is not positive
+        ValueError: If center_lat is outside [-90, 90] (when provided)
+        ValueError: If center_lon is outside [-180, 180] (when provided)
     """
 
-    center_lat: float
-    center_lon: float
     crop_size_km: float
     rotation_deg: float
+    center_lat: Optional[float] = None
+    center_lon: Optional[float] = None
     smoothing_sigma: float = DEFAULT_GAUSSIAN_SMOOTHING_SIGMA
     center_coordinates: bool = False
 
     def __post_init__(self):
         if self.crop_size_km <= 0:
             raise ValueError(f"Crop size must be positive, got {self.crop_size_km}")
-        if not (-90.0 <= self.center_lat <= 90.0):
+        if self.center_lat is not None and not (-90.0 <= self.center_lat <= 90.0):
             raise ValueError(f"Latitude must be between -90 and 90, got {self.center_lat}")
-        if not (-180.0 <= self.center_lon <= 180.0):
+        if self.center_lon is not None and not (-180.0 <= self.center_lon <= 180.0):
             raise ValueError(f"Longitude must be between -180 and 180, got {self.center_lon}")
 
 

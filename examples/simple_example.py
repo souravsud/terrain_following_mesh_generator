@@ -14,11 +14,14 @@ def main():
     dem_path = "path/to/your/terrain.tif"   # Required: path to your GeoTIFF/DAT/NetCDF DEM
     output_dir = "./mesh_output"
     
-    # Create simple configuration
+    # Create simple configuration.
+    # center_lat / center_lon are optional: if omitted the centre is
+    # auto-detected from the geographic extent of the DEM file.
     terrain_config = tm.TerrainConfig(
-        # Replace with your site's coordinates (example: Portalegre, Portugal)
-        center_lat=39.71121111,
-        center_lon=-7.73483333,
+        # Uncomment and replace with your site's coordinates to crop a
+        # specific sub-region rather than the full DEM extent.
+        # center_lat=39.71121111,
+        # center_lon=-7.73483333,
         crop_size_km=25,
         rotation_deg=0,
         smoothing_sigma=0  # No smoothing

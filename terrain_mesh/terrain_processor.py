@@ -80,6 +80,14 @@ class TerrainProcessor:
             FileNotFoundError: If DEM file doesn't exist
             ValueError: If crop region is outside raster bounds
         """
+        # Resolve center lat/lon: use config values when provided, otherwise
+        # auto-detect from the DEM file's own geographic extent.
+        center_lat = config.center_lat
+        center_lon = config.center_lon
+        if center_lat is None or center_lon is None:
+            center_lat, center_lon = self._dem_centre_latlon(dem_path)
+            print(f"Auto-detected centre from DEM: lat={center_lat:.6f}, lon={center_lon:.6f}")
+
         # Get center coordinates (from config or metadata)
         if config.center_coordinates:
             # User provided UTM coordinates directly
@@ -96,14 +104,14 @@ class TerrainProcessor:
             else:
                 # Fallback: convert lat/lon to UTM
                 print("Warning: No metadata found. Converting lat/lon to UTM...")
-                utm_crs = self.get_utm_crs(config.center_lon, config.center_lat)
-                center_utm = self.latlon_to_utm(config.center_lat, config.center_lon, utm_crs)
+                utm_crs = self.get_utm_crs(center_lon, center_lat)
+                center_utm = self.latlon_to_utm(center_lat, center_lon, utm_crs)
         
         self.centre_utm = center_utm
         
         # Store the UTM CRS derived from config coordinates so format adapters
         # (DAT, NetCDF) use the correct zone for the site rather than a hardcoded one.
-        self.utm_crs = self.get_utm_crs(config.center_lon, config.center_lat)
+        self.utm_crs = self.get_utm_crs(center_lon, center_lat)
         
         # Crop using master function
         elevation_data, transform, crs, pixel_res, crop_mask = self.crop_and_rotate_raster(
@@ -448,6 +456,47 @@ class TerrainProcessor:
             )
         return memfile
 
+    def _dem_centre_latlon(self, dem_path: str) -> Tuple[float, float]:
+        """Read the geographic center of a GeoTIFF DEM from its own metadata.
+
+        For GeoTIFFs with a geographic CRS (e.g. WGS84) the center is read
+        directly from the bounding box. For GeoTIFFs with a projected CRS
+        (e.g. UTM) the center is reverse-projected to WGS84 lat/lon.
+
+        Args:
+            dem_path: Path to a GeoTIFF (.tif / .tiff) file
+
+        Returns:
+            (latitude, longitude) of the file's geographic centre in decimal degrees
+
+        Raises:
+            ValueError: If the file is not a GeoTIFF, or has no embedded CRS
+        """
+        suffix = Path(dem_path).suffix.lower()
+        if suffix not in ('.tif', '.tiff'):
+            raise ValueError(
+                "Auto-detection of centre coordinates is only supported for GeoTIFF "
+                "files. Please specify center_lat and center_lon explicitly for "
+                f"{suffix.upper()} files."
+            )
+        with rasterio.open(str(dem_path)) as src:
+            if src.crs is None:
+                raise ValueError(
+                    "GeoTIFF has no embedded CRS. Cannot auto-detect centre. "
+                    "Please specify center_lat and center_lon in the configuration."
+                )
+            bounds = src.bounds
+            cx = (bounds.left + bounds.right) / 2
+            cy = (bounds.bottom + bounds.top) / 2
+            if src.crs.is_geographic:
+                return cy, cx  # lat, lon
+            # Projected CRS: reverse-project centre to WGS84
+            transformer = Transformer.from_crs(
+                src.crs, CRS.from_epsg(WGS84_EPSG), always_xy=True
+            )
+            lon, lat = transformer.transform(cx, cy)
+            return lat, lon
+
     def get_utm_crs(self, longitude: float, latitude: float) -> CRS:
         """Determine the appropriate UTM CRS for given coordinates.
         
@@ -480,7 +529,7 @@ class TerrainProcessor:
             )
         if latitude < -80.0:
             raise ValueError(
-                f"Latitude {latitude}° is below 80°S. UTM is not defined for polar "
+                f"Latitude {latitude}° is south of 80°S. UTM is not defined for polar "
                 "regions. Use a polar stereographic projection instead."
             )
 

@@ -135,8 +135,8 @@ class TestGetUtmCrs:
         assert crs.to_epsg() == 32632
 
     def test_norway_just_outside_exception_uses_standard(self):
-        """Just above 64°N the standard formula applies again."""
-        # 64°N is still band W — exception is only 56°N to <64°N
+        """At exactly 64°N the Norway exception no longer applies (band is 56°N to <64°N)."""
+        # The exception covers 56°N ≤ lat < 64°N; at lat=64.0 the condition is false.
         crs = self.proc.get_utm_crs(5.3, 64.0)
         # Standard formula: zone = int((5.3+180)/6)+1 = 31
         assert crs.to_epsg() == 32631
@@ -339,5 +339,118 @@ class TestGeoTiffReprojection:
                     crop_size_km=5,
                     rotation_deg=0,
                 )
+        finally:
+            os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# TerrainConfig with optional lat/lon
+# ---------------------------------------------------------------------------
+
+class TestTerrainConfigOptionalLatLon:
+    """Ensure center_lat/center_lon can be omitted from TerrainConfig."""
+
+    def test_no_lat_lon_is_valid(self):
+        cfg = TerrainConfig(crop_size_km=10, rotation_deg=0)
+        assert cfg.center_lat is None
+        assert cfg.center_lon is None
+
+    def test_only_lat_provided_is_valid(self):
+        """Partial specification is allowed; validation of one field is independent."""
+        cfg = TerrainConfig(crop_size_km=10, rotation_deg=0, center_lat=45.0)
+        assert cfg.center_lat == 45.0
+        assert cfg.center_lon is None
+
+    def test_explicit_lat_lon_still_validated(self):
+        """Validation still runs when values are explicitly provided."""
+        with pytest.raises(ValueError, match="[Ll]atitude"):
+            TerrainConfig(crop_size_km=10, rotation_deg=0, center_lat=200.0, center_lon=0.0)
+
+    def test_crop_size_required(self):
+        with pytest.raises(TypeError):
+            TerrainConfig(rotation_deg=0)  # missing crop_size_km
+
+    def test_rotation_required(self):
+        with pytest.raises(TypeError):
+            TerrainConfig(crop_size_km=10)  # missing rotation_deg
+
+
+# ---------------------------------------------------------------------------
+# Auto-detection of centre from DEM
+# ---------------------------------------------------------------------------
+
+class TestAutoCentreDetection:
+    """Verify that _dem_centre_latlon() reads the correct centre from a GeoTIFF."""
+
+    def setup_method(self):
+        self.proc = TerrainProcessor()
+
+    def _write_tif(self, lon_min, lat_min, lon_max, lat_max, epsg, tmp_path):
+        """Helper: write a synthetic single-band GeoTIFF to tmp_path."""
+        data = np.ones((20, 20), dtype=np.float32) * 100
+        transform = from_bounds(lon_min, lat_min, lon_max, lat_max, 20, 20)
+        with rasterio.open(
+            tmp_path, 'w', driver='GTiff', height=20, width=20, count=1,
+            dtype='float32', crs=CRS.from_epsg(epsg), transform=transform,
+        ) as dst:
+            dst.write(data, 1)
+
+    def test_geographic_crs_centre(self):
+        """Centre of a WGS84 GeoTIFF is read correctly."""
+        with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            self._write_tif(-8.0, 39.0, -7.0, 40.0, 4326, tmp_path)
+            lat, lon = self.proc._dem_centre_latlon(tmp_path)
+            assert abs(lat - 39.5) < 0.01
+            assert abs(lon - (-7.5)) < 0.01
+        finally:
+            os.unlink(tmp_path)
+
+    def test_projected_crs_centre(self):
+        """Centre of a UTM GeoTIFF is reverse-projected to lat/lon correctly."""
+        from pyproj import Transformer
+        # Portugal: UTM zone 29N (EPSG:32629)
+        tr = Transformer.from_crs("EPSG:4326", "EPSG:32629", always_xy=True)
+        x_min, y_min = tr.transform(-8.0, 39.0)
+        x_max, y_max = tr.transform(-7.0, 40.0)
+        with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            self._write_tif(x_min, y_min, x_max, y_max, 32629, tmp_path)
+            lat, lon = self.proc._dem_centre_latlon(tmp_path)
+            assert abs(lat - 39.5) < 0.05
+            assert abs(lon - (-7.5)) < 0.05
+        finally:
+            os.unlink(tmp_path)
+
+    def test_dat_file_raises_helpful_error(self):
+        """_dem_centre_latlon raises a clear error for non-GeoTIFF formats."""
+        with tempfile.NamedTemporaryFile(suffix='.dat', delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            with pytest.raises(ValueError, match="GeoTIFF"):
+                self.proc._dem_centre_latlon(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_extract_rotated_terrain_auto_detects_centre(self):
+        """extract_rotated_terrain auto-detects centre from a WGS84 GeoTIFF."""
+        # Build a small synthetic WGS84 DEM centred on Portugal
+        lon_c, lat_c = -7.5, 39.5
+        with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            self._write_tif(-9.0, 38.0, -6.0, 41.0, 4326, tmp_path)
+            config = TerrainConfig(crop_size_km=50, rotation_deg=0)
+            assert config.center_lat is None and config.center_lon is None
+
+            proc = TerrainProcessor()
+            elev, min_elev, transform, crs, res, mask, centre_utm = \
+                proc.extract_rotated_terrain(tmp_path, config)
+
+            # Should have produced valid output
+            assert np.any(mask), "Expected valid pixels"
+            assert proc.utm_crs is not None
         finally:
             os.unlink(tmp_path)
