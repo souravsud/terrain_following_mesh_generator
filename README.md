@@ -209,8 +209,8 @@ Controls boundary treatment to reduce artificial terrain effects at domain edges
 terrain:
   center_lat: 39.71121111
   center_lon: -7.73483333
-  crop_size_km: 25
-  rotation_deg: 0
+  crop_size_km: 30
+  rotation_deg: 225
 
 grid:
   nx: 200
