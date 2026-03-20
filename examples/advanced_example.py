@@ -13,12 +13,13 @@ def main():
     """Generate an advanced mesh with grading and boundary treatment."""
     
     # Define paths (update these for your system)
-    dem_path = "path/to/your/terrain.tif"
-    roughness_path = "path/to/your/roughness.tif"  # Optional
+    dem_path = "path/to/your/terrain.tif"       # Required: path to your GeoTIFF/DAT/NetCDF DEM
+    roughness_path = "path/to/your/roughness.tif"  # Optional roughness map
     output_dir = "./mesh_output_advanced"
     
     # Terrain configuration with rotation
     terrain_config = tm.TerrainConfig(
+        # Replace with your site's coordinates (example: Perdigão, Portugal)
         center_lat=39.71121111,
         center_lon=-7.73483333,
         crop_size_km=25,

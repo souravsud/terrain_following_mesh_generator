@@ -14,6 +14,7 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
+from rasterio.warp import calculate_default_transform, reproject, Resampling
 from pyproj import Transformer
 import warnings
 
@@ -48,6 +49,7 @@ class TerrainProcessor:
         self.centre_utm = None
         self.original_crs = None
         self.expanded_bounds = None
+        self.utm_crs = None  # Auto-detected UTM CRS based on center coordinates
     
     def extract_rotated_terrain(
         self, dem_path: str, config: TerrainConfig
@@ -78,6 +80,14 @@ class TerrainProcessor:
             FileNotFoundError: If DEM file doesn't exist
             ValueError: If crop region is outside raster bounds
         """
+        # Resolve center lat/lon: use config values when provided, otherwise
+        # auto-detect from the DEM file's own geographic extent.
+        center_lat = config.center_lat
+        center_lon = config.center_lon
+        if center_lat is None or center_lon is None:
+            center_lat, center_lon = self._dem_centre_latlon(dem_path)
+            print(f"Auto-detected centre from DEM: lat={center_lat:.6f}, lon={center_lon:.6f}")
+
         # Get center coordinates (from config or metadata)
         if config.center_coordinates:
             # User provided UTM coordinates directly
@@ -94,10 +104,14 @@ class TerrainProcessor:
             else:
                 # Fallback: convert lat/lon to UTM
                 print("Warning: No metadata found. Converting lat/lon to UTM...")
-                utm_crs = self.get_utm_crs(config.center_lon, config.center_lat)
-                center_utm = self.latlon_to_utm(config.center_lat, config.center_lon, utm_crs)
+                utm_crs = self.get_utm_crs(center_lon, center_lat)
+                center_utm = self.latlon_to_utm(center_lat, center_lon, utm_crs)
         
         self.centre_utm = center_utm
+        
+        # Store the UTM CRS derived from config coordinates so format adapters
+        # (DAT, NetCDF) use the correct zone for the site rather than a hardcoded one.
+        self.utm_crs = self.get_utm_crs(center_lon, center_lat)
         
         # Crop using master function
         elevation_data, transform, crs, pixel_res, crop_mask = self.crop_and_rotate_raster(
@@ -202,9 +216,26 @@ class TerrainProcessor:
                 return self._crop_raster_core(src, center_utm, crop_size_m, rotation_deg)
         
         elif suffix in ['.tif', '.tiff']:
-            # GeoTIFF - direct processing (already in UTM from downloader)
             with rasterio.open(str(raster_path)) as src:
-                return self._crop_raster_core(src, center_utm, crop_size_m, rotation_deg)
+                if src.crs is not None and not src.crs.is_projected:
+                    # Geographic CRS detected (e.g. WGS84 EPSG:4326).
+                    # The crop logic works in UTM metres, so reproject first.
+                    if self.utm_crs is None:
+                        raise ValueError(
+                            "Cannot reproject geographic GeoTIFF: UTM CRS has not "
+                            "been determined yet. Call extract_rotated_terrain() "
+                            "before processing roughness maps, or supply a GeoTIFF "
+                            "that is already projected to UTM."
+                        )
+                    print(
+                        f"  Geographic CRS detected ({src.crs.to_string()}). "
+                        f"Reprojecting to {self.utm_crs.to_string()}..."
+                    )
+                    memfile = self._reproject_to_utm(src, self.utm_crs)
+                    with memfile.open() as utm_src:
+                        return self._crop_raster_core(utm_src, center_utm, crop_size_m, rotation_deg)
+                else:
+                    return self._crop_raster_core(src, center_utm, crop_size_m, rotation_deg)
         
         else:
             raise ValueError(f"Unsupported raster format: {suffix}")
@@ -317,9 +348,9 @@ class TerrainProcessor:
         
         transform = from_bounds(x_min, y_min, x_max, y_max, cols, rows)
         
-        # Assume UTM Zone (you can make this configurable)
-        # For now, use a placeholder - will be overridden by actual UTM
-        utm_crs = CRS.from_epsg(32610)  # Adjust as needed
+        # Use auto-detected UTM CRS derived from the site's center coordinates.
+        # Falls back to UTM Zone 10N only when called without prior terrain extraction.
+        utm_crs = self.utm_crs if self.utm_crs is not None else CRS.from_epsg(32610)
         
         memfile = MemoryFile()
         with memfile.open(
@@ -360,8 +391,9 @@ class TerrainProcessor:
         
         transform = from_bounds(x_min, y_min, x_max, y_max, cols, rows)
         
-        # Use placeholder UTM CRS
-        utm_crs = CRS.from_epsg(32610)  # Adjust as needed
+        # Use auto-detected UTM CRS derived from the site's center coordinates.
+        # Falls back to UTM Zone 10N only when called without prior terrain extraction.
+        utm_crs = self.utm_crs if self.utm_crs is not None else CRS.from_epsg(32610)
         
         memfile = MemoryFile()
         with memfile.open(
@@ -378,6 +410,93 @@ class TerrainProcessor:
         ds.close()
         return memfile
     
+    def _reproject_to_utm(self, src, target_crs: CRS) -> MemoryFile:
+        """Reproject a rasterio dataset to a UTM CRS in memory.
+        
+        Used to transparently handle GeoTIFF files that arrive in a geographic
+        CRS (e.g. WGS84 EPSG:4326) instead of a projected UTM CRS.
+        
+        Args:
+            src: Open rasterio DatasetReader in any CRS
+            target_crs: Target projected CRS (should be the site's UTM zone)
+            
+        Returns:
+            MemoryFile containing the reprojected single-band raster
+        """
+        transform, width, height = calculate_default_transform(
+            src.crs, target_crs, src.width, src.height, *src.bounds
+        )
+
+        src_dtype = src.dtypes[0]
+
+        # Preserve nodata from source; fall back to NaN for floating-point data
+        nodata = src.nodata
+        if nodata is None and np.issubdtype(np.dtype(src_dtype), np.floating):
+            nodata = np.nan
+
+        memfile = MemoryFile()
+        with memfile.open(
+            driver='GTiff',
+            height=height,
+            width=width,
+            count=1,
+            dtype=src_dtype,
+            crs=target_crs,
+            transform=transform,
+            nodata=nodata,
+        ) as dst:
+            reproject(
+                source=rasterio.band(src, 1),
+                destination=rasterio.band(dst, 1),
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=transform,
+                dst_crs=target_crs,
+                resampling=Resampling.bilinear,
+            )
+        return memfile
+
+    def _dem_centre_latlon(self, dem_path: str) -> Tuple[float, float]:
+        """Read the geographic center of a GeoTIFF DEM from its own metadata.
+
+        For GeoTIFFs with a geographic CRS (e.g. WGS84) the center is read
+        directly from the bounding box. For GeoTIFFs with a projected CRS
+        (e.g. UTM) the center is reverse-projected to WGS84 lat/lon.
+
+        Args:
+            dem_path: Path to a GeoTIFF (.tif / .tiff) file
+
+        Returns:
+            (latitude, longitude) of the file's geographic centre in decimal degrees
+
+        Raises:
+            ValueError: If the file is not a GeoTIFF, or has no embedded CRS
+        """
+        suffix = Path(dem_path).suffix.lower()
+        if suffix not in ('.tif', '.tiff'):
+            raise ValueError(
+                "Auto-detection of centre coordinates is only supported for GeoTIFF "
+                "files. Please specify center_lat and center_lon explicitly for "
+                f"{suffix.upper()} files."
+            )
+        with rasterio.open(str(dem_path)) as src:
+            if src.crs is None:
+                raise ValueError(
+                    "GeoTIFF has no embedded CRS. Cannot auto-detect centre. "
+                    "Please specify center_lat and center_lon in the configuration."
+                )
+            bounds = src.bounds
+            cx = (bounds.left + bounds.right) / 2
+            cy = (bounds.bottom + bounds.top) / 2
+            if src.crs.is_geographic:
+                return cy, cx  # lat, lon
+            # Projected CRS: reverse-project centre to WGS84
+            transformer = Transformer.from_crs(
+                src.crs, CRS.from_epsg(WGS84_EPSG), always_xy=True
+            )
+            lon, lat = transformer.transform(cx, cy)
+            return lat, lon
+
     def get_utm_crs(self, longitude: float, latitude: float) -> CRS:
         """Determine the appropriate UTM CRS for given coordinates.
         
@@ -385,16 +504,61 @@ class TerrainProcessor:
         Northern hemisphere uses EPSG codes 32601-32660.
         Southern hemisphere uses EPSG codes 32701-32760.
         
+        Special handling:
+        - Longitude 180° is clamped to zone 60 (same meridian as -180°).
+        - Norway zone 32V exception (56°N–64°N, 3°E–12°E → zone 32 instead of 31).
+        - Svalbard zone X exceptions (72°N–84°N → zones 31/33/35/37 only).
+        - Polar regions (lat > 84°N or lat < -80°S) raise ValueError because UTM
+          is not defined there.
+        
         Args:
             longitude: Longitude in decimal degrees (-180 to 180)
             latitude: Latitude in decimal degrees (-90 to 90)
             
         Returns:
             rasterio CRS object for the appropriate UTM zone
+            
+        Raises:
+            ValueError: If coordinates are in a polar region where UTM is undefined
         """
-        # Calculate UTM zone
-        utm_zone = int((longitude + 180) / UTM_ZONE_WIDTH) + 1
-        
+        # Reject polar regions where UTM is not defined
+        if latitude > 84.0:
+            raise ValueError(
+                f"Latitude {latitude}° is above 84°N. UTM is not defined for polar "
+                "regions. Use a polar stereographic projection instead."
+            )
+        if latitude < -80.0:
+            raise ValueError(
+                f"Latitude {latitude}° is south of 80°S. UTM is not defined for polar "
+                "regions. Use a polar stereographic projection instead."
+            )
+
+        # Calculate base UTM zone.
+        # The formula int((lon + 180) / 6) + 1 naturally gives zone 1 for
+        # lon = -180 (same meridian as +180, i.e. the date line).
+        # Clamping to 60 ensures lon = 180 also maps to zone 60 instead of
+        # producing the non-existent zone 61.
+        utm_zone = min(int((longitude + 180) / UTM_ZONE_WIDTH) + 1, 60)
+
+        # Norway zone 32V exception (UTM standard §1.1):
+        # In band V (56°N–64°N), the region 3°E–12°E uses zone 32 rather than
+        # the standard split into zones 31 (0°–6°E) and 32 (6°–12°E).
+        if 56.0 <= latitude < 64.0 and 3.0 <= longitude < 12.0:
+            utm_zone = 32
+
+        # Svalbard zone X exceptions (72°N–84°N):
+        # Zones 32, 34, and 36 do not exist in this latitude band; instead the
+        # adjacent odd zones are widened to 12° each.
+        elif 72.0 <= latitude <= 84.0:
+            if longitude < 9.0:
+                utm_zone = 31
+            elif longitude < 21.0:
+                utm_zone = 33
+            elif longitude < 33.0:
+                utm_zone = 35
+            elif longitude < 42.0:
+                utm_zone = 37
+
         # Determine hemisphere
         if latitude >= 0:
             epsg_code = UTM_NORTH_BASE + utm_zone  # Northern hemisphere
