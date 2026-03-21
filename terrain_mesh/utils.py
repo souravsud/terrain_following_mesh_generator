@@ -3,7 +3,75 @@ import os
 from datetime import datetime
 import json
 from pathlib import Path
+from typing import Tuple
 from scipy.ndimage import gaussian_filter
+from scipy.interpolate import RegularGridInterpolator
+
+
+def build_roughness_interpolator(
+    roughness_data: np.ndarray,
+    roughness_transform: object,
+    default_z0: float = 0.1,
+) -> RegularGridInterpolator:
+    """Build a bilinear interpolator for a roughness raster.
+
+    Fills NaN values in *roughness_data* using nearest-neighbour propagation
+    before constructing the interpolator, ensuring continuous coverage over
+    the rotated terrain crop region.
+
+    Args:
+        roughness_data: 2-D numpy array of z0 values (may contain NaN outside
+            the rotated crop region).
+        roughness_transform: Affine transform for the roughness raster.  The
+            relevant attributes are ``c`` (x_min), ``f`` (y_max), ``a``
+            (x_pixel_size > 0), and ``e`` (y_pixel_size < 0 for north-up).
+        default_z0: Fill value used for query points that fall outside the
+            raster extent (should not occur in practice).
+
+    Returns:
+        :class:`scipy.interpolate.RegularGridInterpolator` that accepts query
+        points as ``(y, x)`` coordinate pairs.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    nrows, ncols = roughness_data.shape
+    x_res = roughness_transform.a
+    y_res = -roughness_transform.e  # positive pixel height (transform.e < 0)
+    x_coords = np.arange(ncols) * x_res + roughness_transform.c
+    y_coords = np.arange(nrows) * (-y_res) + roughness_transform.f  # descending
+
+    filled = roughness_data.copy()
+    invalid = np.isnan(filled)
+    if np.any(invalid):
+        indices = distance_transform_edt(invalid, return_distances=False, return_indices=True)
+        filled[invalid] = roughness_data[tuple(indices[:, invalid])]
+
+    return RegularGridInterpolator(
+        (y_coords, x_coords), filled,
+        method='linear', bounds_error=False, fill_value=default_z0,
+    )
+
+
+def load_terrain_points(terrain_map: str) -> Tuple[int, int, np.ndarray]:
+    """Load terrain surface points from an NPZ terrain map file.
+
+    This is the inverse of the ``np.savez_compressed`` call in
+    :meth:`TerrainMeshPipeline._save_maps`.  It returns the same ``(ny, nx,
+    3)`` points array that the VTK reader previously produced, so existing
+    downstream code that indexes ``points[j, i, :]`` works unchanged.
+
+    Args:
+        terrain_map: Path to ``maps/terrain_map.npz``.
+
+    Returns:
+        Tuple ``(ny, nx, points)`` where *points* has shape ``(ny, nx, 3)``
+        with columns ``[x, y, elevation]``.
+    """
+    data = np.load(terrain_map)
+    ny, nx = data['elevation'].shape
+    points = np.stack([data['x'], data['y'], data['elevation']], axis=-1)
+    return ny, nx, points
+
 
 def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False, geographic=False):
     """
@@ -116,7 +184,7 @@ def write_metadata(**kwargs):
         },
 
         "output_files": {
-            "vtk_mesh": _relative(kwargs['vtk_path']),
+            "terrain_map": _relative(kwargs['terrain_map_path']),
             "blockmesh_dict": _relative(kwargs['blockmesh_path']),
             "metadata_file": _relative(kwargs['metadata_path']),
         },

@@ -3,12 +3,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-import pyvista as pv
 from pathlib import Path
 from typing import Optional, Dict
 
 from .config import VisualizationConfig
-from .utils import rotate_coordinates
+from .utils import rotate_coordinates, load_terrain_points
 
 class TerrainVisualizer:
     """Handle visualization of input and output data"""
@@ -126,7 +125,7 @@ class TerrainVisualizer:
         print(f"Boundary treatment plots saved: {output_path}")
     
     def create_roughness_plots(self, roughness_data: np.ndarray, roughness_transform: object,
-                           z0_stats: dict, output_dir: Path, vtk_file: Optional[str] = None):
+                           z0_stats: dict, output_dir: Path, terrain_map: Optional[str] = None):
         """Create diagnostic plots for roughness map and interpolated z0"""
         if not self.config.create_plots:
             return
@@ -164,13 +163,11 @@ class TerrainVisualizer:
         
         # 2. Interpolated z0 on mesh faces
         ax = axes[1]
-        if vtk_file and Path(vtk_file).exists():
-            mesh = pv.read(vtk_file)
-            nx, ny, _ = mesh.dimensions
-            points = mesh.points.reshape((ny, nx, 3))
+        if terrain_map and Path(terrain_map).exists():
+            ny, nx, points = load_terrain_points(terrain_map)
             valid_mask = ~np.isnan(points[:, :, 2])
             
-            # Read z0 values - FIXED PARSING
+            # Read z0 values
             z0_file = output_dir / '0' / 'include' / 'z0Values'
             if z0_file.exists():
                 z0_values = []
@@ -231,7 +228,7 @@ class TerrainVisualizer:
                     transform=ax.transAxes, fontsize=12)
                 ax.axis('off')
         else:
-            ax.text(0.5, 0.5, 'VTK file not available', ha='center', va='center', 
+            ax.text(0.5, 0.5, 'Terrain map not available', ha='center', va='center', 
                     transform=ax.transAxes, fontsize=12)
             ax.axis('off')
         

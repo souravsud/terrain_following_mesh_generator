@@ -47,7 +47,7 @@ def main():
     )
     
     print(f"\n✓ Mesh generated successfully!")
-    print(f"  VTK file: {results['vtk_path']}")
+    print(f"  Terrain map: {results['terrain_map_path']}")
     print(f"  blockMeshDict: {results['blockmesh_path']}")
 
 

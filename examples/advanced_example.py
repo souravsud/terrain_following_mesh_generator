@@ -96,10 +96,11 @@ def main():
     )
     
     print(f"\n✓ Advanced mesh generated successfully!")
-    print(f"  VTK file: {results['vtk_path']}")
+    print(f"  Terrain map: {results['terrain_map_path']}")
     print(f"  blockMeshDict: {results['blockmesh_path']}")
     if results['has_roughness']:
         print(f"  z0 field: {output_dir}/0/include/z0Values")
+        print(f"  Roughness map: {results['roughness_map_path']}")
 
 
 if __name__ == "__main__":
