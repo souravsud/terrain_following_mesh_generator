@@ -1,11 +1,10 @@
 import os
 import numpy as np
-import pyvista as pv
 from typing import Dict, List, Tuple
 from pathlib import Path
 
 from .config import MeshConfig
-from .utils import create_blockMesh_spacing, generate_region_coordinates
+from .utils import create_blockMesh_spacing, generate_region_coordinates, build_roughness_interpolator, load_terrain_points
 
 
 class BlockMeshGenerator:
@@ -14,7 +13,7 @@ class BlockMeshGenerator:
     def generate_blockMeshDict(
         self,
         config: MeshConfig,
-        input_vtk_file: str = "terrain_structured.vtk",
+        terrain_map: str = "maps/terrain_map.npz",
         output_dict_file: str = "system/blockMeshDict",
         inlet_face_file: str = "0/include/inletFaceInfo.txt",
         roughness_data: np.ndarray = None,
@@ -23,7 +22,7 @@ class BlockMeshGenerator:
         """Wrapper method that uses MeshConfig"""
 
         return self._blockMeshDictCreator(
-            input_vtk_file=input_vtk_file,
+            terrain_map=terrain_map,
             output_dict_file=output_dict_file,
             inlet_face_file=inlet_face_file,
             domain_height=config.domain_height,
@@ -38,7 +37,7 @@ class BlockMeshGenerator:
 
     def _blockMeshDictCreator(
         self,
-        input_vtk_file="terrain_structured.vtk",
+        terrain_map="maps/terrain_map.npz",
         output_dict_file="system/blockMeshDict",
         inlet_face_file="0/include/inletFaceInfo.txt",
         domain_height=4000.0,
@@ -70,10 +69,8 @@ class BlockMeshGenerator:
         )
 
         try:
-            # Read VTK file
-            mesh = pv.read(input_vtk_file)
-            nx, ny, _ = mesh.dimensions
-            points = mesh.points.reshape((ny, nx, 3))
+            # Read terrain map (NPZ)
+            ny, nx, points = load_terrain_points(terrain_map)
             print(f"Read structured grid: {nx}x{ny} with {points.shape} points")
 
             # Extract coordinates
@@ -486,8 +483,6 @@ class BlockMeshGenerator:
         """
         z0_min = 0.0002 # Minimum z0 to avoid zero or extremely small values that can cause numerical issues in log-law calculations- values corresponds to that of water
         
-        from scipy.interpolate import RegularGridInterpolator
-        
         print("Saving inlet face information...")
 
         # Create the directory for the output file if it doesn't exist.
@@ -500,29 +495,8 @@ class BlockMeshGenerator:
         z0_interpolator = None
         if roughness_data is not None and roughness_transform is not None:
             print("Preparing z0 interpolation for inlet faces...")
-            nrows, ncols = roughness_data.shape
-            x_min = roughness_transform.c
-            y_max = roughness_transform.f
-            x_res = roughness_transform.a
-            y_res = -roughness_transform.e
-            
-            x_coords = np.arange(ncols) * x_res + x_min
-            y_coords = np.arange(nrows) * (-y_res) + y_max
-            
-            # Fill NaN with nearest neighbor
-            roughness_filled = roughness_data.copy()
-            if np.any(np.isnan(roughness_filled)):
-                from scipy.ndimage import distance_transform_edt
-                invalid_mask = np.isnan(roughness_filled)
-                indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
-                roughness_filled[invalid_mask] = roughness_data[tuple(indices[:, invalid_mask])]
-            
-            z0_interpolator = RegularGridInterpolator(
-                (y_coords, x_coords),
-                roughness_filled,
-                method='linear',
-                bounds_error=False,
-                fill_value=default_z0
+            z0_interpolator = build_roughness_interpolator(
+                roughness_data, roughness_transform, default_z0
             )
 
         # Collect inlet faces (both terrain_normal_first_layer modes share identical face data)
@@ -669,32 +643,28 @@ class BlockMeshGenerator:
     
     def generate_z0_field(
         self,
-        vtk_file: str,
+        terrain_map: str,
         roughness_data: np.ndarray,
         roughness_transform: object,
         output_file: str,
         default_z0: float = 0.1
     ):
         """
-        Generate OpenFOAM z0 field file from roughness map and VTK mesh.
+        Generate OpenFOAM z0 field file from roughness map and terrain map.
         
         Args:
-            vtk_file: Path to VTK terrain file
+            terrain_map: Path to terrain NPZ map (maps/terrain_map.npz)
             roughness_data: 2D roughness array (with NaN outside rotated crop)
             roughness_transform: Affine transform for roughness grid
             output_file: Output path for z0 field file (e.g. '0/include/z0Values')
             default_z0: Default roughness for points outside roughness coverage (fallback only)
         """
-        from scipy.interpolate import RegularGridInterpolator
-        
         print("\n" + "="*60)
         print("Generating z0 field for OpenFOAM")
         print("="*60)
         
-        # Read VTK mesh
-        mesh = pv.read(vtk_file)
-        nx, ny, _ = mesh.dimensions
-        points = mesh.points.reshape((ny, nx, 3))
+        # Read terrain map (NPZ)
+        ny, nx, points = load_terrain_points(terrain_map)
         
         # Extract ground face centers (same logic as blockMeshDict generation)
         z_coords = points[:, :, 2]
@@ -728,54 +698,15 @@ class BlockMeshGenerator:
         print(f"Found {n_faces} ground faces")
         print(f"Ground face center bounds: X[{ground_face_centers[:, 0].min():.2f}, {ground_face_centers[:, 0].max():.2f}], "
             f"Y[{ground_face_centers[:, 1].min():.2f}, {ground_face_centers[:, 1].max():.2f}]")
-        
-        # Prepare roughness grid for interpolation
-        nrows, ncols = roughness_data.shape
-        
-        # Get coordinate arrays from transform
-        x_min = roughness_transform.c
-        y_max = roughness_transform.f
-        x_res = roughness_transform.a
-        y_res = -roughness_transform.e  # Usually negative
-        
-        x_coords_rough = np.arange(ncols) * x_res + x_min
-        y_coords_rough = np.arange(nrows) * (-y_res) + y_max  # Descending
-        
-        print(f"Roughness grid: {nrows}x{ncols}")
-        print(f"Roughness bounds: X[{x_coords_rough[0]:.2f}, {x_coords_rough[-1]:.2f}], "
-            f"Y[{y_coords_rough[-1]:.2f}, {y_coords_rough[0]:.2f}]")
-        print(f"Valid roughness pixels: {np.sum(~np.isnan(roughness_data))} / {roughness_data.size}")
-        
-        # For interpolation, we need to handle NaN values
-        # Option 1: Use nearest-neighbor to fill NaN gaps first
-        valid_mask_rough = ~np.isnan(roughness_data)
-        
-        if not np.any(valid_mask_rough):
+
+        if not np.any(~np.isnan(roughness_data)):
             raise ValueError("No valid roughness data in cropped region")
-        
-        # Fill NaN using nearest valid value (for interpolation continuity)
-        # This is better than using default_z0 everywhere
-        from scipy.ndimage import distance_transform_edt
-        
-        roughness_data_filled = roughness_data.copy()
-        
-        # Find nearest valid pixel for each NaN pixel
-        invalid_mask = np.isnan(roughness_data)
-        if np.any(invalid_mask):
-            # Distance transform to find nearest valid pixel
-            indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
-            roughness_data_filled[invalid_mask] = roughness_data[tuple(indices[:, invalid_mask])]
-        
-        print(f"Filled {np.sum(invalid_mask)} NaN pixels using nearest neighbor propagation")
-        
-        # Create interpolator (bilinear)
-        interpolator = RegularGridInterpolator(
-            (y_coords_rough, x_coords_rough),  # Note: (y, x) order for (rows, cols)
-            roughness_data_filled,
-            method='linear',
-            bounds_error=False,
-            fill_value=default_z0  # Fallback for points outside grid (shouldn't happen)
-        )
+
+        print(f"Roughness grid: {roughness_data.shape[0]}x{roughness_data.shape[1]}")
+        print(f"Valid roughness pixels: {np.sum(~np.isnan(roughness_data))} / {roughness_data.size}")
+
+        # Build shared roughness interpolator (NaN-fill + bilinear)
+        interpolator = build_roughness_interpolator(roughness_data, roughness_transform, default_z0)
         
         # Interpolate z0 at ground face centers
         face_z0_values = interpolator(ground_face_centers[:, [1, 0]])  # (y, x) order
@@ -820,9 +751,9 @@ class BlockMeshGenerator:
         print("="*60)
         
         return {
-        'n_faces': n_faces,
-        'z0_min': float(face_z0_values.min()),
-        'z0_max': float(face_z0_values.max()),
-        'z0_mean': float(face_z0_values.mean()),
-        'output_file': str(output_file)
-    }
+            'n_faces': n_faces,
+            'z0_min': float(face_z0_values.min()),
+            'z0_max': float(face_z0_values.max()),
+            'z0_mean': float(face_z0_values.mean()),
+            'output_file': str(output_file)
+        }

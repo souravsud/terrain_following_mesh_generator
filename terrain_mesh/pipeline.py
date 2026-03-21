@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import Union, Optional, Dict
 from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig
-from .utils import write_metadata
+from .utils import write_metadata, build_roughness_interpolator
 from .terrain_processor import TerrainProcessor
 from .boundary_treatment import BoundaryTreatment
 from .grid_generator import StructuredGridGenerator
@@ -26,7 +26,7 @@ class TerrainMeshPipeline:
     1. Extract and process terrain elevation data
     2. Apply boundary treatment and smoothing
     3. Generate structured grid with custom grading
-    4. Export to VTK format
+    4. Save terrain (and roughness) maps to maps/ as NPZ files
     5. Generate OpenFOAM blockMeshDict and z0 field
     6. Create visualization plots
     
@@ -85,12 +85,11 @@ class TerrainMeshPipeline:
         Returns:
             Dictionary containing paths to generated files:
             - output_dir: Path to output directory
-            - vtk_path: Path to VTK mesh file
+            - terrain_map_path: Path to terrain elevation NPZ map in maps/
+            - roughness_map_path: Path to roughness NPZ map in maps/ (if roughness provided)
             - blockmesh_path: Path to blockMeshDict (if created)
             - metadata_path: Path to metadata JSON (if saved)
             - has_roughness: Boolean indicating if roughness data was processed
-            - terrain_map_path: Path to terrain elevation NPZ map in maps/
-            - roughness_map_path: Path to roughness NPZ map in maps/ (if roughness provided)
             
         Raises:
             FileNotFoundError: If dem_path doesn't exist
@@ -157,15 +156,9 @@ class TerrainMeshPipeline:
             centre_utm
         )
         
-        # Step 4: Save VTK output
-        logger.info("[4/6] Saving VTK mesh...")
-        print("\n[4/6] Saving VTK mesh...")
-        vtk_path = output_dir / 'terrain_structured.vtk'
-        grid.save(str(vtk_path))
-        logger.info(f"VTK mesh saved to: {vtk_path}")
-        print(f"VTK mesh saved to: {vtk_path}")
-        
-        # Save ML-ready maps (terrain elevation and roughness) to maps/ folder
+        # Step 4: Save ML-ready terrain and roughness maps to maps/ folder
+        logger.info("[4/6] Saving terrain maps...")
+        print("\n[4/6] Saving terrain maps...")
         terrain_map_path, roughness_map_path = self._save_maps(
             grid=grid,
             roughness_data=roughness_data,
@@ -184,7 +177,7 @@ class TerrainMeshPipeline:
         if roughness_data is not None:
             z0_file = output_dir / '0' / 'include' / 'z0Values'
             z0_stats = self.blockmesh_generator.generate_z0_field(
-                vtk_file=str(vtk_path),
+                terrain_map=str(terrain_map_path),
                 roughness_data=roughness_data,
                 roughness_transform=roughness_transform,
                 output_file=str(z0_file),
@@ -199,7 +192,7 @@ class TerrainMeshPipeline:
             blockmesh_path = output_dir / 'system' / 'blockMeshDict'
             inletFaceInfo_path = output_dir / '0' / 'include' / 'inletFaceInfo.txt'
             self.blockmesh_generator.generate_blockMeshDict(
-                mesh_config, str(vtk_path), str(blockmesh_path), str(inletFaceInfo_path),
+                mesh_config, str(terrain_map_path), str(blockmesh_path), str(inletFaceInfo_path),
                 roughness_data, roughness_transform
             )
             logger.info(f"blockMeshDict saved to: {blockmesh_path}")
@@ -232,7 +225,7 @@ class TerrainMeshPipeline:
                     roughness_transform, 
                     z0_stats, 
                     output_dir, 
-                    str(vtk_path)
+                    str(terrain_map_path)
                 )
             
             logger.info("Visualization plots created")
@@ -260,7 +253,7 @@ class TerrainMeshPipeline:
                 centre_utm=centre_utm,
                 pixel_res=pixel_res,
                 grid=grid,
-                vtk_path=vtk_path,
+                terrain_map_path=terrain_map_path,
                 blockmesh_path=blockmesh_path,
                 output_dir=output_dir,
                 metadata_path=metadata_path
@@ -277,12 +270,11 @@ class TerrainMeshPipeline:
         # Return results dictionary
         results = {
             'output_dir': str(output_dir),
-            'vtk_path': str(vtk_path),
+            'terrain_map_path': str(terrain_map_path),
+            'roughness_map_path': str(roughness_map_path) if roughness_map_path else None,
             'blockmesh_path': str(blockmesh_path) if blockmesh_path else None,
             'metadata_path': str(metadata_path) if metadata_path else None,
             'has_roughness': roughness_data is not None,
-            'terrain_map_path': str(terrain_map_path),
-            'roughness_map_path': str(roughness_map_path) if roughness_map_path else None,
         }
         
         return results
@@ -294,10 +286,12 @@ class TerrainMeshPipeline:
         Creates a ``maps/`` folder inside *output_dir* and writes:
 
         * ``terrain_map.npz`` – structured surface mesh elevation with arrays
-          ``elevation``, ``x``, ``y`` each of shape ``(ny, nx)``.
-        * ``roughness_map.npz`` – roughness length (z0) interpolated to the same
-          grid with arrays ``z0``, ``x``, ``y`` of shape ``(ny, nx)``.  Only
-          written when *roughness_data* is provided.
+          ``elevation``, ``x``, ``y`` each of shape ``(ny, nx)``.  This file
+          is also the primary terrain surface used by the OpenFOAM generation
+          steps downstream (replaces the previously generated VTK file).
+        * ``roughness_map.npz`` – roughness length (z0) interpolated to the
+          same grid with arrays ``z0``, ``x``, ``y`` of shape ``(ny, nx)``.
+          Only written when *roughness_data* is provided.
 
         Args:
             grid: PyVista StructuredGrid produced by :class:`StructuredGridGenerator`.
@@ -307,31 +301,28 @@ class TerrainMeshPipeline:
                 coordinates for *roughness_data*.
             centre_utm: ``(x, y)`` UTM coordinates of the terrain centre used
                 when *center_coordinates* is ``True``.
-            center_coordinates: Whether the grid's X/Y values are centred at the
-                terrain centre rather than being absolute UTM coordinates.
+            center_coordinates: Whether the grid's X/Y values are centred at
+                the terrain centre rather than being absolute UTM coordinates.
             output_dir: :class:`~pathlib.Path` of the pipeline output directory.
 
         Returns:
             Tuple ``(terrain_map_path, roughness_map_path)`` where
             *roughness_map_path* is ``None`` when no roughness data was provided.
         """
-        from scipy.interpolate import RegularGridInterpolator
-        from scipy.ndimage import distance_transform_edt
-
         maps_dir = output_dir / 'maps'
         maps_dir.mkdir(parents=True, exist_ok=True)
 
         # ------------------------------------------------------------------ #
-        # Extract structured grid data                                         #
-        # Grid dimensions: (nx, ny, 1) → reshape points to (ny, nx, 3)       #
+        # Extract structured grid arrays – shape (ny, nx)                     #
+        # Grid dimensions are (nx, ny, 1); points flattened in row-major order
         # ------------------------------------------------------------------ #
         nx, ny, _ = grid.dimensions
         points = grid.points.reshape((ny, nx, 3))
-        X = points[:, :, 0]  # shape (ny, nx) – centred or UTM depending on flag
-        Y = points[:, :, 1]  # shape (ny, nx)
-        Z = points[:, :, 2]  # shape (ny, nx) – terrain elevation
+        X = points[:, :, 0]
+        Y = points[:, :, 1]
+        Z = points[:, :, 2]
 
-        # Save terrain elevation map
+        # Terrain elevation map (no interpolation – direct read from grid)
         terrain_map_path = maps_dir / 'terrain_map.npz'
         np.savez_compressed(terrain_map_path, elevation=Z, x=X, y=Y)
         logger.info(f"Terrain map saved to: {terrain_map_path}")
@@ -340,11 +331,7 @@ class TerrainMeshPipeline:
         roughness_map_path = None
 
         if roughness_data is not None and roughness_transform is not None:
-            # ---------------------------------------------------------------- #
-            # Interpolate roughness to the structured grid                      #
-            # ---------------------------------------------------------------- #
-
-            # Convert grid coordinates to absolute UTM for roughness lookup
+            # Convert centred grid coordinates back to absolute UTM for lookup
             if center_coordinates:
                 X_utm = X + centre_utm[0]
                 Y_utm = Y + centre_utm[1]
@@ -352,44 +339,19 @@ class TerrainMeshPipeline:
                 X_utm = X
                 Y_utm = Y
 
-            # Build 1-D coordinate arrays for the roughness raster
-            nrows, ncols = roughness_data.shape
-            x_min = roughness_transform.c
-            y_max = roughness_transform.f
-            x_res = roughness_transform.a
-            y_res = -roughness_transform.e  # transform.e is negative for north-up rasters
-
-            x_coords_rough = np.arange(ncols) * x_res + x_min
-            y_coords_rough = np.arange(nrows) * (-y_res) + y_max  # strictly descending
-
-            # Fill NaN gaps in roughness raster using nearest-neighbour propagation
-            roughness_filled = roughness_data.copy()
-            invalid_mask = np.isnan(roughness_data)
-            if np.any(invalid_mask):
-                indices = distance_transform_edt(
-                    invalid_mask, return_distances=False, return_indices=True
-                )
-                roughness_filled[invalid_mask] = roughness_data[
-                    tuple(indices[:, invalid_mask])
-                ]
-
-            # Bilinear interpolation at each grid point
-            interpolator = RegularGridInterpolator(
-                (y_coords_rough, x_coords_rough),
-                roughness_filled,
-                method='linear',
-                bounds_error=False,
-                fill_value=np.nan,
+            # Build shared interpolator (NaN-fill + bilinear) and query at
+            # every grid point – same approach as generate_z0_field but at
+            # grid vertices rather than cell-face centres.
+            interpolator = build_roughness_interpolator(
+                roughness_data, roughness_transform, default_z0=np.nan
             )
-
             query_points = np.column_stack((Y_utm.ravel(), X_utm.ravel()))
             z0_flat = interpolator(query_points)
 
-            # Apply minimum roughness only to cells with valid elevation
+            # Apply minimum roughness only where elevation is defined
             valid_elev = ~np.isnan(Z.ravel())
             z0_flat[valid_elev] = np.maximum(z0_flat[valid_elev], 0.0002)
-            # Preserve NaN where terrain elevation is undefined
-            z0_flat[~valid_elev] = np.nan
+            z0_flat[~valid_elev] = np.nan  # preserve NaN outside terrain
 
             Z0_grid = z0_flat.reshape((ny, nx))
 
