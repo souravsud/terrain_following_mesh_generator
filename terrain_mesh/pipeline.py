@@ -4,6 +4,7 @@ This module provides the TerrainMeshPipeline class which coordinates all steps
 of the mesh generation process from terrain extraction to OpenFOAM export.
 """
 import logging
+import numpy as np
 from pathlib import Path
 from typing import Union, Optional, Dict
 from .config import TerrainConfig, GridConfig, MeshConfig, BoundaryConfig, VisualizationConfig
@@ -88,6 +89,8 @@ class TerrainMeshPipeline:
             - blockmesh_path: Path to blockMeshDict (if created)
             - metadata_path: Path to metadata JSON (if saved)
             - has_roughness: Boolean indicating if roughness data was processed
+            - terrain_map_path: Path to terrain elevation NPZ map in maps/
+            - roughness_map_path: Path to roughness NPZ map in maps/ (if roughness provided)
             
         Raises:
             FileNotFoundError: If dem_path doesn't exist
@@ -161,6 +164,16 @@ class TerrainMeshPipeline:
         grid.save(str(vtk_path))
         logger.info(f"VTK mesh saved to: {vtk_path}")
         print(f"VTK mesh saved to: {vtk_path}")
+        
+        # Save ML-ready maps (terrain elevation and roughness) to maps/ folder
+        terrain_map_path, roughness_map_path = self._save_maps(
+            grid=grid,
+            roughness_data=roughness_data,
+            roughness_transform=roughness_transform,
+            centre_utm=centre_utm,
+            center_coordinates=terrain_config.center_coordinates,
+            output_dir=output_dir,
+        )
         
         # Step 5: Generate OpenFOAM outputs
         logger.info("[5/6] Generating OpenFOAM files...")
@@ -267,7 +280,122 @@ class TerrainMeshPipeline:
             'vtk_path': str(vtk_path),
             'blockmesh_path': str(blockmesh_path) if blockmesh_path else None,
             'metadata_path': str(metadata_path) if metadata_path else None,
-            'has_roughness': roughness_data is not None
+            'has_roughness': roughness_data is not None,
+            'terrain_map_path': str(terrain_map_path),
+            'roughness_map_path': str(roughness_map_path) if roughness_map_path else None,
         }
         
         return results
+
+    def _save_maps(self, grid, roughness_data, roughness_transform, centre_utm,
+                   center_coordinates, output_dir):
+        """Save terrain elevation and roughness maps as NPZ files for ML use.
+
+        Creates a ``maps/`` folder inside *output_dir* and writes:
+
+        * ``terrain_map.npz`` – structured surface mesh elevation with arrays
+          ``elevation``, ``x``, ``y`` each of shape ``(ny, nx)``.
+        * ``roughness_map.npz`` – roughness length (z0) interpolated to the same
+          grid with arrays ``z0``, ``x``, ``y`` of shape ``(ny, nx)``.  Only
+          written when *roughness_data* is provided.
+
+        Args:
+            grid: PyVista StructuredGrid produced by :class:`StructuredGridGenerator`.
+            roughness_data: Optional 2-D numpy array of z0 values (may contain
+                NaN outside the rotated crop region).
+            roughness_transform: Affine transform mapping pixel indices to UTM
+                coordinates for *roughness_data*.
+            centre_utm: ``(x, y)`` UTM coordinates of the terrain centre used
+                when *center_coordinates* is ``True``.
+            center_coordinates: Whether the grid's X/Y values are centred at the
+                terrain centre rather than being absolute UTM coordinates.
+            output_dir: :class:`~pathlib.Path` of the pipeline output directory.
+
+        Returns:
+            Tuple ``(terrain_map_path, roughness_map_path)`` where
+            *roughness_map_path* is ``None`` when no roughness data was provided.
+        """
+        from scipy.interpolate import RegularGridInterpolator
+        from scipy.ndimage import distance_transform_edt
+
+        maps_dir = output_dir / 'maps'
+        maps_dir.mkdir(parents=True, exist_ok=True)
+
+        # ------------------------------------------------------------------ #
+        # Extract structured grid data                                         #
+        # Grid dimensions: (nx, ny, 1) → reshape points to (ny, nx, 3)       #
+        # ------------------------------------------------------------------ #
+        nx, ny, _ = grid.dimensions
+        points = grid.points.reshape((ny, nx, 3))
+        X = points[:, :, 0]  # shape (ny, nx) – centred or UTM depending on flag
+        Y = points[:, :, 1]  # shape (ny, nx)
+        Z = points[:, :, 2]  # shape (ny, nx) – terrain elevation
+
+        # Save terrain elevation map
+        terrain_map_path = maps_dir / 'terrain_map.npz'
+        np.savez_compressed(terrain_map_path, elevation=Z, x=X, y=Y)
+        logger.info(f"Terrain map saved to: {terrain_map_path}")
+        print(f"  ✓ Terrain map (elevation) saved to: {terrain_map_path}")
+
+        roughness_map_path = None
+
+        if roughness_data is not None and roughness_transform is not None:
+            # ---------------------------------------------------------------- #
+            # Interpolate roughness to the structured grid                      #
+            # ---------------------------------------------------------------- #
+
+            # Convert grid coordinates to absolute UTM for roughness lookup
+            if center_coordinates:
+                X_utm = X + centre_utm[0]
+                Y_utm = Y + centre_utm[1]
+            else:
+                X_utm = X
+                Y_utm = Y
+
+            # Build 1-D coordinate arrays for the roughness raster
+            nrows, ncols = roughness_data.shape
+            x_min = roughness_transform.c
+            y_max = roughness_transform.f
+            x_res = roughness_transform.a
+            y_res = -roughness_transform.e  # transform.e is negative for north-up rasters
+
+            x_coords_rough = np.arange(ncols) * x_res + x_min
+            y_coords_rough = np.arange(nrows) * (-y_res) + y_max  # strictly descending
+
+            # Fill NaN gaps in roughness raster using nearest-neighbour propagation
+            roughness_filled = roughness_data.copy()
+            invalid_mask = np.isnan(roughness_data)
+            if np.any(invalid_mask):
+                indices = distance_transform_edt(
+                    invalid_mask, return_distances=False, return_indices=True
+                )
+                roughness_filled[invalid_mask] = roughness_data[
+                    tuple(indices[:, invalid_mask])
+                ]
+
+            # Bilinear interpolation at each grid point
+            interpolator = RegularGridInterpolator(
+                (y_coords_rough, x_coords_rough),
+                roughness_filled,
+                method='linear',
+                bounds_error=False,
+                fill_value=np.nan,
+            )
+
+            query_points = np.column_stack((Y_utm.ravel(), X_utm.ravel()))
+            z0_flat = interpolator(query_points)
+
+            # Apply minimum roughness only to cells with valid elevation
+            valid_elev = ~np.isnan(Z.ravel())
+            z0_flat[valid_elev] = np.maximum(z0_flat[valid_elev], 0.0002)
+            # Preserve NaN where terrain elevation is undefined
+            z0_flat[~valid_elev] = np.nan
+
+            Z0_grid = z0_flat.reshape((ny, nx))
+
+            roughness_map_path = maps_dir / 'roughness_map.npz'
+            np.savez_compressed(roughness_map_path, z0=Z0_grid, x=X, y=Y)
+            logger.info(f"Roughness map saved to: {roughness_map_path}")
+            print(f"  ✓ Roughness map (z0) saved to: {roughness_map_path}")
+
+        return terrain_map_path, roughness_map_path
