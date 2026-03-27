@@ -56,6 +56,7 @@ class TerrainMeshPipeline:
         self.blockmesh_generator = BlockMeshGenerator()
         self.metadata = {}
         logger.info("TerrainMeshPipeline initialized")
+        logger.debug("Components: TerrainProcessor, BoundaryTreatment, StructuredGridGenerator, TerrainVisualizer, BlockMeshGenerator")
     
     def run(self, 
            dem_path: Union[str, Path],
@@ -112,33 +113,23 @@ class TerrainMeshPipeline:
         logger.info("=" * 60)
         logger.info(f"Output directory: {output_dir}")
         
-        # For backward compatibility, also print to console
-        print("=" * 60)
-        print("Running Terrain Following Mesh Generation Pipeline")
-        print("=" * 60)
-        print(f"Output directory: {output_dir}")
-        
         # Step 1: Extract terrain and roughness data
         logger.info("[1/6] Extracting terrain elevation...")
-        print("\n[1/6] Extracting terrain elevation...")
         elevation_data, min_elevation, transform, crs, pixel_res, crop_mask, centre_utm = \
             self.processor.extract_rotated_terrain(dem_path, terrain_config)
         
         roughness_data, roughness_transform = None, None
         if rmap_path:
             logger.info("[1/6] Extracting roughness map...")
-            print("[1/6] Extracting roughness map...")
             roughness_data, roughness_transform = \
                 self.processor.extract_rotated_rmap(rmap_path, terrain_config)
         
         if mesh_config.adjust_ceiling_for_terrain and min_elevation != 0.0:
             logger.info("[1/6] Adjusting domain ceiling for terrain altitude (AGL mode)...")
-            print("[1/6] Adjusting domain ceiling for terrain altitude (AGL mode)...")
             mesh_config.domain_height = mesh_config.domain_height + min_elevation
         
         # Step 2: Apply boundary treatment
         logger.info("[2/6] Applying boundary treatment...")
-        print("\n[2/6] Applying boundary treatment...")
         treated_elevation, boundary_elevations, treated_mask, zones = \
             self.boundary_treatment.process_boundaries(
                 elevation_data, crop_mask, boundary_config, terrain_config.rotation_deg
@@ -146,7 +137,6 @@ class TerrainMeshPipeline:
         
         # Step 3: Generate structured grid
         logger.info("[3/6] Generating structured grid...")
-        print("\n[3/6] Generating structured grid...")
         grid = self.generator.create_grid(
             treated_elevation, 
             transform, 
@@ -158,7 +148,6 @@ class TerrainMeshPipeline:
         
         # Step 4: Save ML-ready terrain and roughness maps to maps/ folder
         logger.info("[4/6] Saving terrain maps...")
-        print("\n[4/6] Saving terrain maps...")
         terrain_map_path, roughness_map_path = self._save_maps(
             grid=grid,
             roughness_data=roughness_data,
@@ -170,7 +159,6 @@ class TerrainMeshPipeline:
         
         # Step 5: Generate OpenFOAM outputs
         logger.info("[5/6] Generating OpenFOAM files...")
-        print("\n[5/6] Generating OpenFOAM files...")
         
         # Generate z0 field if roughness map provided
         z0_stats = None
@@ -184,7 +172,6 @@ class TerrainMeshPipeline:
                 default_z0=0.1
             )
             logger.info(f"z0 field saved with {z0_stats['n_faces']} faces")
-            print(f"  ✓ z0 field saved with {z0_stats['n_faces']} faces")
         
         # Generate blockMeshDict if requested
         blockmesh_path = None
@@ -196,14 +183,11 @@ class TerrainMeshPipeline:
                 roughness_data, roughness_transform
             )
             logger.info(f"blockMeshDict saved to: {blockmesh_path}")
-            logger.info(f"inletFaceInfo saved to: {inletFaceInfo_path}")
-            print(f"  ✓ blockMeshDict saved to: {blockmesh_path}")
-            print(f"  ✓ inletFaceInfo saved to: {inletFaceInfo_path}")
+            logger.debug(f"inletFaceInfo saved to: {inletFaceInfo_path}")
         
         # Step 6: Create visualizations
         if visualization_config.create_plots:
             logger.info("[6/6] Creating visualization plots...")
-            print("\n[6/6] Creating visualization plots...")
             
             self.visualizer = TerrainVisualizer(visualization_config)
             
@@ -228,14 +212,12 @@ class TerrainMeshPipeline:
                     str(terrain_map_path)
                 )
             
-            logger.info("Visualization plots created")
-            print("  ✓ Visualization plots created")
+            logger.debug("Visualization plots created")
         
         # Save metadata
         metadata_path = None
         if save_metadata:
-            logger.info("Saving pipeline metadata...")
-            print("\nSaving pipeline metadata...")
+            logger.debug("Saving pipeline metadata...")
             metadata_path = output_dir / 'pipeline_metadata.json'
             write_metadata(
                 dem_path=dem_path,
@@ -258,14 +240,11 @@ class TerrainMeshPipeline:
                 output_dir=output_dir,
                 metadata_path=metadata_path
             )
-            logger.info(f"Metadata saved to: {metadata_path}")
-            print(f"  ✓ Metadata saved to: {metadata_path}")
+            logger.debug(f"Metadata saved to: {metadata_path}")
         
         # Final summary
         logger.info("Pipeline completed successfully!")
-        print("\n" + "=" * 60)
-        print("Pipeline completed successfully!")
-        print("=" * 60)
+        logger.info("=" * 60)
         
         # Return results dictionary
         results = {
@@ -325,8 +304,7 @@ class TerrainMeshPipeline:
         # Terrain elevation map (no interpolation – direct read from grid)
         terrain_map_path = maps_dir / 'terrain_map.npz'
         np.savez_compressed(terrain_map_path, elevation=Z, x=X, y=Y)
-        logger.info(f"Terrain map saved to: {terrain_map_path}")
-        print(f"  ✓ Terrain map (elevation) saved to: {terrain_map_path}")
+        logger.debug(f"Terrain map saved to: {terrain_map_path}")
 
         roughness_map_path = None
 
@@ -357,7 +335,6 @@ class TerrainMeshPipeline:
 
             roughness_map_path = maps_dir / 'roughness_map.npz'
             np.savez_compressed(roughness_map_path, z0=Z0_grid, x=X, y=Y)
-            logger.info(f"Roughness map saved to: {roughness_map_path}")
-            print(f"  ✓ Roughness map (z0) saved to: {roughness_map_path}")
+            logger.debug(f"Roughness map saved to: {roughness_map_path}")
 
         return terrain_map_path, roughness_map_path

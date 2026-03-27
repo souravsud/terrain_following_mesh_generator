@@ -1,10 +1,13 @@
 """Clean 4-zone boundary treatment with proper kernel progression and zone definitions"""
 
+import logging
 import numpy as np
 from scipy.ndimage import gaussian_filter, uniform_filter, median_filter, generic_filter
 from typing import Tuple, Dict, Optional, List
 from .config import BoundaryConfig
 from .utils import rotate_coordinates
+
+logger = logging.getLogger(__name__)
 
 class BoundaryTreatment:
     """4-zone boundary smoothing: AOI → Transition → Blend → Flat"""
@@ -16,7 +19,7 @@ class BoundaryTreatment:
                           config: BoundaryConfig, rotation_deg: float) -> Tuple[np.ndarray, np.ndarray, Dict]:
         """Apply 4-zone progressive smoothing boundary treatment"""
         
-        print("Applying 4-zone progressive smoothing boundary treatment...")
+        logger.debug("Applying 4-zone progressive smoothing boundary treatment...")
         
         # Validate configuration
         self._validate_config(config)
@@ -42,7 +45,7 @@ class BoundaryTreatment:
         treated_mask = crop_mask.copy()
         result[~treated_mask] = np.nan
         
-        print("4-zone progressive smoothing boundary treatment complete")
+        logger.debug("Boundary treatment complete")
         return result, boundary_elevations, treated_mask, zones
     
     def _validate_config(self, config: BoundaryConfig) -> None:
@@ -55,7 +58,7 @@ class BoundaryTreatment:
             raise ValueError("flat_boundary_thickness_fraction must be between 0 and 1")
         
         if config.aoi_fraction + config.flat_boundary_thickness_fraction >= 0.9:
-            print(f"Warning: AOI fraction ({config.aoi_fraction}) + flat thickness ({config.flat_boundary_thickness_fraction}) "
+            logger.warning(f"AOI fraction ({config.aoi_fraction}) + flat thickness ({config.flat_boundary_thickness_fraction}) "
                   f"may leave very little transition zone")
         
         if config.progression_rate <= 1:
@@ -70,7 +73,7 @@ class BoundaryTreatment:
         if not np.any(nan_mask):
             return elevation_cleaned
             
-        print(f"Filling {np.sum(nan_mask)} NaN pixels...")
+        logger.debug(f"Filling {np.sum(nan_mask)} NaN pixels...")
         
         # Simple 3x3 neighborhood filling
         
@@ -88,7 +91,7 @@ class BoundaryTreatment:
                                               rotation_deg: float) -> Dict[str, float]:
         """Calculate boundary target elevations from outermost strips"""
         
-        print("Calculating boundary heights from perimeter strips...")
+        logger.debug("Calculating boundary heights from perimeter strips...")
         
         if config.boundary_mode == 'directional':
             return self._sample_directional_boundary_strips(elevation_data, crop_mask, config, rotation_deg)
@@ -116,10 +119,10 @@ class BoundaryTreatment:
         if np.any(strip_mask):
             strip_elevations = elevation_data[strip_mask]
             target_height = self._calculate_filtered_average(strip_elevations)
-            print(f"Radial boundary height: {target_height:.2f}m")
+            logger.debug(f"Radial boundary height: {target_height:.2f}m")
             return {'uniform': target_height}
         else:
-            print("Warning: No valid boundary strip pixels, using 0.0m")
+            logger.warning("No valid boundary strip pixels found, using 0.0m")
             return {'uniform': 0.0}
     
     def _sample_directional_boundary_strips(self, elevation_data: np.ndarray,
@@ -143,16 +146,16 @@ class BoundaryTreatment:
             elif direction == 'west':
                 strip_mask = (flow_x <= (bounds['min_x'] + true_flat_thickness)) & crop_mask
             else:
-                print(f"Warning: Unsupported boundary direction '{direction}', skipping")
+                logger.warning(f"Unsupported boundary direction '{direction}', skipping")
                 continue
             
             if np.any(strip_mask):
                 strip_elevations = elevation_data[strip_mask]
                 target_height = self._calculate_filtered_average(strip_elevations)
                 boundary_elevations[direction] = target_height
-                print(f"{direction.capitalize()} boundary height: {target_height:.2f}m")
+                logger.debug(f"{direction.capitalize()} boundary height: {target_height:.2f}m")
             else:
-                print(f"Warning: No valid {direction} boundary pixels, using 0.0m")
+                logger.warning(f"No valid {direction} boundary pixels found, using 0.0m")
                 boundary_elevations[direction] = 0.0
         
         return boundary_elevations
@@ -216,20 +219,20 @@ class BoundaryTreatment:
         target_elevation = boundary_elevations['uniform']
         
         # Apply zones
-        print(f"Preserved AOI: {np.sum(aoi_mask)} pixels")
+        logger.debug(f"Preserved AOI: {np.sum(aoi_mask)} pixels")
         
         result[true_flat_mask] = target_elevation
-        print(f"Applied true flat zone: {np.sum(true_flat_mask)} pixels at {target_elevation:.2f}m")
+        logger.debug(f"Applied true flat zone: {np.sum(true_flat_mask)} pixels at {target_elevation:.2f}m")
         
         if np.any(transition_mask):
-            print(f"Applying progressive smoothing: {np.sum(transition_mask)} pixels...")
+            logger.debug(f"Applying progressive smoothing: {np.sum(transition_mask)} pixels...")
             transition_distances = distances[transition_mask]
             distance_factors = (transition_distances - aoi_radius) / (transition_end_radius - aoi_radius)
             result = self._apply_progressive_smoothing_to_zone(
                 result, crop_mask, transition_mask, distance_factors, config)
         
         if np.any(blend_mask):
-            print(f"Applying blend zone: {np.sum(blend_mask)} pixels...")
+            logger.debug(f"Applying blend zone: {np.sum(blend_mask)} pixels...")
             blend_distances = distances[blend_mask]
             blend_factors = (blend_distances - blend_start_radius) / (true_flat_start_radius - blend_start_radius)
             result = self._apply_blend_to_zone(
@@ -287,23 +290,23 @@ class BoundaryTreatment:
             all_true_flat_mask |= true_flat_mask
             all_blend_mask |= blend_mask
             
-            print(f"Applied {direction} true flat zone: {np.sum(true_flat_mask)} pixels at {target_elevation:.2f}m")
+            logger.debug(f"Applied {direction} true flat zone: {np.sum(true_flat_mask)} pixels at {target_elevation:.2f}m")
         
         # Define transition zone
         transition_mask = crop_mask & ~aoi_mask & ~all_blend_mask & ~all_true_flat_mask
         
-        print(f"Preserved AOI: {np.sum(aoi_mask)} pixels")
+        logger.debug(f"Preserved AOI: {np.sum(aoi_mask)} pixels")
         
         # Apply transition zone progressive smoothing
         if np.any(transition_mask):
-            print(f"Applying progressive smoothing: {np.sum(transition_mask)} pixels...")
+            logger.debug(f"Applying progressive smoothing: {np.sum(transition_mask)} pixels...")
             result = self._apply_directional_progressive_smoothing(
                 result, crop_mask, transition_mask, flow_coords, aoi_half_size, 
                 total_flat_thickness, config)
         
         # Apply blend zones
         if np.any(all_blend_mask):
-            print(f"Applying blend zones: {np.sum(all_blend_mask)} pixels...")
+            logger.debug(f"Applying blend zones: {np.sum(all_blend_mask)} pixels...")
             result = self._apply_directional_blend_zones(
                 result, crop_mask, all_blend_mask, flow_coords, 
                 total_flat_thickness, true_flat_thickness, boundary_elevations, config)
@@ -318,7 +321,7 @@ class BoundaryTreatment:
         # Get or create smoothed pyramid
         pyramid_key = self._get_pyramid_cache_key(config)
         if pyramid_key not in self._pyramid_cache:
-            print("Creating multi-scale pyramid...")
+            logger.debug("Creating multi-scale pyramid...")
             self._pyramid_cache[pyramid_key] = self._create_multiscale_pyramid(result, crop_mask, config)
         
         smoothed_images = self._pyramid_cache[pyramid_key]
@@ -380,7 +383,7 @@ class BoundaryTreatment:
         max_transition_distance = terrain_width/2 - aoi_half_size - total_flat_thickness
         
         if max_transition_distance <= 0:
-            print("Warning: Transition zone too small")
+            logger.warning("Transition zone too small, skipping progressive smoothing")
             return result
         
         # Calculate distance factors
@@ -492,7 +495,7 @@ class BoundaryTreatment:
         # Calculate kernel size range with proper progression
         base_size, max_size = self._calculate_kernel_size_range(config)
         
-        print(f"Creating pyramid: kernel range {base_size:.1f} to {max_size:.1f}")
+        logger.debug(f"Creating pyramid: kernel range {base_size:.1f} to {max_size:.1f}")
         
         num_scales = 7
         smoothed_images = []
@@ -516,7 +519,7 @@ class BoundaryTreatment:
                 kernel_size = base_size + scale_factor * (max_size - base_size)
             
             kernel_size = max(int(kernel_size), 1)
-            print(f"Scale {scale_idx+1}/{num_scales}: kernel size {kernel_size}")
+            logger.debug(f"Scale {scale_idx+1}/{num_scales}: kernel size {kernel_size}")
             
             # Apply smoothing
             if config.smoothing_method == 'gaussian':

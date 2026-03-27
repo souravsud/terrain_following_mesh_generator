@@ -1,10 +1,13 @@
 import numpy as np
+import logging
 import pyvista as pv
 from scipy.ndimage import map_coordinates
 from typing import Tuple
 
 from .config import GridConfig, TerrainConfig
 from .utils import rotate_coordinates, create_blockMesh_spacing
+
+logger = logging.getLogger(__name__)
 
 class StructuredGridGenerator:
     """Generate structured grids from terrain data"""
@@ -52,7 +55,7 @@ class StructuredGridGenerator:
         min_col, max_col = terrain_cols.min(), terrain_cols.max()
         
         # 2. Convert ALL valid terrain points to UTM to find rotated bounds
-        print("Finding terrain bounds in rotated coordinate system...")
+        logger.debug("Finding terrain bounds in rotated coordinate system...")
         
         # Get all terrain pixels in UTM
         terrain_utm_x = terrain_cols * transform.a + transform.c
@@ -62,7 +65,7 @@ class StructuredGridGenerator:
         terrain_center_x = terrain_utm_x.mean()
         terrain_center_y = terrain_utm_y.mean()
         
-        print(f"Terrain center: ({terrain_center_x:.1f}, {terrain_center_y:.1f})")
+        logger.debug(f"Terrain center: ({terrain_center_x:.1f}, {terrain_center_y:.1f})")
         
         # 3. Rotate all terrain points to find bounds in rotated coordinate system.
         # Coordinates are UTM (y increases northward), so geographic=True is required
@@ -80,26 +83,26 @@ class StructuredGridGenerator:
         terrain_width = max_x_rot - min_x_rot
         terrain_height = max_y_rot - min_y_rot
         
-        print(f"Rotated terrain bounds: {terrain_width:.1f}m x {terrain_height:.1f}m")
-        print(f"Rotation: {rotation_deg}° clockwise from north")
+        logger.debug(f"Rotated terrain bounds: {terrain_width:.1f}m x {terrain_height:.1f}m")
+        logger.debug(f"Rotation: {rotation_deg}° from north")
         
         # 4. Create grid coordinates to fit these exact bounds
         if x_grading is not None:
-            print(f"Creating X grading: {x_grading}")
+            logger.debug(f"Creating X grading: {x_grading}")
             x_norm = create_blockMesh_spacing(target_cols, x_grading)
             # Scale to fit exact terrain width
             x_coords = x_norm * terrain_width + min_x_rot
         else:
-            print("Creating uniform X spacing")
+            logger.debug("Creating uniform X spacing")
             x_coords = np.linspace(min_x_rot, max_x_rot, target_cols)
         
         if y_grading is not None:
-            print(f"Creating Y grading: {y_grading}")
+            logger.debug(f"Creating Y grading: {y_grading}")
             y_norm = create_blockMesh_spacing(target_rows, y_grading)
             # Scale to fit exact terrain height
             y_coords = y_norm * terrain_height + min_y_rot
         else:
-            print("Creating uniform Y spacing")
+            logger.debug("Creating uniform Y spacing")
             y_coords = np.linspace(min_y_rot, max_y_rot, target_rows)
         
         X_local, Y_local = np.meshgrid(x_coords, y_coords)
@@ -133,21 +136,21 @@ class StructuredGridGenerator:
         # 9. Check for any NaN values (should be minimal since grid fits terrain)
         nan_count = np.sum(np.isnan(Z))
         total_points = Z.size
-        print(f"NaN values: {nan_count}/{total_points} ({100*nan_count/total_points:.1f}%)")
+        logger.debug(f"NaN values: {nan_count}/{total_points} ({100*nan_count/total_points:.1f}%)")
         
         if nan_count > 0:
-            print(f"Warning: {nan_count} points outside terrain - consider adjusting bounds")
+            logger.warning(f"{nan_count} grid points fall outside terrain bounds — consider adjusting domain")
         
         # 10. Center coordinates if requested
         if center_coordinates:
             X_final = X_utm - terrain_center_x
             Y_final = Y_utm - terrain_center_y
-            print(f"Coordinates centered at origin")
+            logger.debug("Coordinates centered at origin")
         else:
             X_final = X_utm
             Y_final = Y_utm
         
-        print(f"Final grid: {target_cols} x {target_rows} (as requested)")
+        logger.debug(f"Final grid: {target_cols} x {target_rows}")
         
         # 11. Create PyVista structured grid
         points = np.column_stack((X_final.ravel(), Y_final.ravel(), Z.ravel()))
