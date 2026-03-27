@@ -1,10 +1,13 @@
 import os
+import logging
 import numpy as np
 from typing import Dict, List, Tuple
 from pathlib import Path
 
 from .config import MeshConfig
 from .utils import create_blockMesh_spacing, generate_region_coordinates, build_roughness_interpolator, load_terrain_points
+
+logger = logging.getLogger(__name__)
 
 
 class BlockMeshGenerator:
@@ -71,7 +74,7 @@ class BlockMeshGenerator:
         try:
             # Read terrain map (NPZ)
             ny, nx, points = load_terrain_points(terrain_map)
-            print(f"Read structured grid: {nx}x{ny} with {points.shape} points")
+            logger.debug(f"Grid: {nx}x{ny} ({points.shape[0]} points)")
 
             # Extract coordinates
             x_coords = points[:, :, 0]  # (ny, nx)
@@ -81,12 +84,12 @@ class BlockMeshGenerator:
             # Create validity mask (not NaN)
             valid_mask = ~np.isnan(z_coords)
             nan_count = np.sum(~valid_mask)
-            print(f"Found {nan_count}/{valid_mask.size} NaN points ({100*nan_count/valid_mask.size:.1f}%)")
+            logger.debug(f"NaN points: {nan_count}/{valid_mask.size} ({100*nan_count/valid_mask.size:.1f}%)")
 
             # Calculate terrain normals
             normals = None
             if terrain_normal_first_layer:
-                print("Calculating terrain normals...")
+                logger.debug("Calculating terrain normals...")
                 normals = self.calculate_vertex_normals(points, valid_mask, nx, ny)
             
             # Create vertex mapping (only for valid points)
@@ -130,7 +133,7 @@ class BlockMeshGenerator:
                             vertex_counter += 1
                 
                 
-                print(f"Created {num_ground_vertices} ground + {num_ground_vertices} first_layer + {num_ground_vertices} sky = {len(valid_vertices)} vertices")
+                logger.debug(f"Vertices: {num_ground_vertices} ground + {num_ground_vertices} first_layer + {num_ground_vertices} sky = {len(valid_vertices)}")
             else:
 
                 # Map valid sky vertices
@@ -140,8 +143,7 @@ class BlockMeshGenerator:
                             x, y, z = points[j, i]
                             valid_vertices.append((x, y, domain_height))  # Sky vertex
                             vertex_counter += 1
-                print("valid vertices:", len(valid_vertices))
-                print(f"Created {num_ground_vertices} ground + {num_ground_vertices} sky = {len(valid_vertices)} vertices")
+                logger.debug(f"Vertices: {num_ground_vertices} ground + {num_ground_vertices} sky = {len(valid_vertices)}")
 
             # Find valid blocks and store positions
             valid_blocks_layer1 = []
@@ -185,8 +187,7 @@ class BlockMeshGenerator:
                             
                             block_positions[(i, j)] = (v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11)
                 
-                print(f"Created {len(valid_blocks_layer1)} first layer blocks + {len(valid_blocks_layer2plus)} upper layer blocks")
-                print(f"Skipped {(nx-1)*(ny-1) - len(valid_blocks_layer1)} blocks with NaN")
+                logger.debug(f"Blocks: {len(valid_blocks_layer1)} first layer + {len(valid_blocks_layer2plus)} upper layer (skipped {(nx-1)*(ny-1) - len(valid_blocks_layer1)} NaN blocks)")
                   
             else:
                 for j in range(ny - 1):
@@ -214,7 +215,7 @@ class BlockMeshGenerator:
                             valid_blocks_layer1.append(block)
                             block_positions[(i, j)] = (v0, v1, v2, v3, v4, v5, v6, v7)
 
-                print(f"Created {len(valid_blocks_layer1)} valid blocks (skipped {(nx-1)*(ny-1) - len(valid_blocks_layer1)} blocks with NaN)")
+                logger.debug(f"Blocks: {len(valid_blocks_layer1)} valid (skipped {(nx-1)*(ny-1) - len(valid_blocks_layer1)} NaN blocks)")
 
             # Detect boundary patches
             boundary_patches = self.detect_boundary_patches(
@@ -304,32 +305,26 @@ class BlockMeshGenerator:
                 f.write(");\n\n")
                 f.write("// ************************************************************************* //\n")
 
-            print(f"\nSuccessfully generated blockMeshDict at '{output_dict_file}'")
+            logger.debug(f"blockMeshDict written to '{output_dict_file}'")
             if terrain_normal_first_layer:
                 total_cells = len(valid_blocks_layer1) + len(valid_blocks_layer2plus) * (total_z_cells - 1)
-                print(f"Total cells: {total_cells} (first layer: {len(valid_blocks_layer1)}, upper layers: {len(valid_blocks_layer2plus) * (total_z_cells - 1)})")
             else:
                 total_cells = len(valid_blocks_layer1) * total_z_cells
-                print(f"Total cells: {total_cells}")
+            logger.debug(f"Total cells: {total_cells}")
 
-            # Print boundary summary
-            print(f"\nBoundary patches created:")
-            print(f"  ground ({patch_types['ground']}): {len(valid_blocks_layer1)} faces")
-            if terrain_normal_first_layer:
-                print(f"  sky ({patch_types['sky']}): {len(valid_blocks_layer2plus)} faces")
-            else:
-                print(f"  sky ({patch_types['sky']}): {len(valid_blocks_layer1)} faces")
-            for patch_name in ['inlet', 'outlet', 'sides']:
-                if boundary_patches[patch_name]:
-                    print(f"  {patch_name} ({patch_types[patch_name]}): {len(boundary_patches[patch_name])} faces")
-
-            print(f"\nZ-direction configuration:")
-            print(f"  Total z-cells: {total_z_cells}")
-            print(f"  Z-grading: {z_grading}")
-            print(f"  Generated grading spec: {z_grading_spec}")
+            # Log boundary summary
+            sky_faces = len(valid_blocks_layer2plus) if terrain_normal_first_layer else len(valid_blocks_layer1)
+            side_summary = ", ".join(
+                f"{p}: {len(boundary_patches[p])}" for p in ['inlet', 'outlet', 'sides'] if boundary_patches[p]
+            )
+            logger.debug(
+                f"Patches — ground: {len(valid_blocks_layer1)}, sky: {sky_faces}"
+                + (f", {side_summary}" if side_summary else "")
+            )
+            logger.debug(f"Z-cells: {total_z_cells}, grading: {z_grading}")
 
         except Exception as e:
-            print(f"Error: {e}")
+            logger.error(f"Failed to generate blockMeshDict: {e}")
 
     def calculate_vertex_normals(self, points, valid_mask, nx, ny):
         """
@@ -483,7 +478,7 @@ class BlockMeshGenerator:
         """
         z0_min = 0.0002 # Minimum z0 to avoid zero or extremely small values that can cause numerical issues in log-law calculations- values corresponds to that of water
         
-        print("Saving inlet face information...")
+        logger.debug("Saving inlet face information...")
 
         # Create the directory for the output file if it doesn't exist.
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -494,7 +489,7 @@ class BlockMeshGenerator:
         # Prepare z0 interpolator if roughness data provided
         z0_interpolator = None
         if roughness_data is not None and roughness_transform is not None:
-            print("Preparing z0 interpolation for inlet faces...")
+            logger.debug("Preparing z0 interpolation for inlet faces...")
             z0_interpolator = build_roughness_interpolator(
                 roughness_data, roughness_transform, default_z0
             )
@@ -536,10 +531,10 @@ class BlockMeshGenerator:
                 f"geo_mean={z0_eff:.4f}"
             )
             
-            print(f"Inlet z0 statistics: {z0_stats}")
+            logger.debug(f"Inlet z0 statistics: {z0_stats}")
         else:
             z0_eff = default_z0
-            print(f"No roughness data provided, using default z0={default_z0}")
+            logger.debug(f"No roughness data provided, using default z0={default_z0}")
 
         # Save to file
         with open(output_file, "w") as f:
@@ -579,7 +574,7 @@ class BlockMeshGenerator:
 
             f.write("# FACE_DATA_END\n")
 
-        print(f"Saved inlet face info: {len(inlet_faces)} blocks to {output_file}")
+        logger.debug(f"Saved inlet face info: {len(inlet_faces)} blocks to {output_file}")
 
         return inlet_faces
 
@@ -608,7 +603,7 @@ class BlockMeshGenerator:
             first_cell_size = (z_coords[1] - z_coords[0]) * domain_height
             second_cell_size = (z_coords[2] - z_coords[1]) * domain_height
             third_cell_size = (z_coords[3] - z_coords[2]) * domain_height
-            print(f"First cell size: {first_cell_size}, Second cell size: {second_cell_size}, Third cell size: {third_cell_size}")
+            logger.debug(f"Cell sizes — first: {first_cell_size:.3f}m, second: {second_cell_size:.3f}m, third: {third_cell_size:.3f}m")
             cell_ratio = first_cell_size / second_cell_size
         else:
             z_coords = create_blockMesh_spacing(total_z_cells + 1, z_grading)
@@ -659,9 +654,7 @@ class BlockMeshGenerator:
             output_file: Output path for z0 field file (e.g. '0/include/z0Values')
             default_z0: Default roughness for points outside roughness coverage (fallback only)
         """
-        print("\n" + "="*60)
-        print("Generating z0 field for OpenFOAM")
-        print("="*60)
+        logger.debug("Generating z0 field for OpenFOAM")
         
         # Read terrain map (NPZ)
         ny, nx, points = load_terrain_points(terrain_map)
@@ -695,15 +688,14 @@ class BlockMeshGenerator:
         ground_face_centers = np.array(ground_face_centers)
         n_faces = len(ground_face_centers)
         
-        print(f"Found {n_faces} ground faces")
-        print(f"Ground face center bounds: X[{ground_face_centers[:, 0].min():.2f}, {ground_face_centers[:, 0].max():.2f}], "
+        logger.debug(f"Found {n_faces} ground faces")
+        logger.debug(f"Face center bounds: X[{ground_face_centers[:, 0].min():.2f}, {ground_face_centers[:, 0].max():.2f}], "
             f"Y[{ground_face_centers[:, 1].min():.2f}, {ground_face_centers[:, 1].max():.2f}]")
 
         if not np.any(~np.isnan(roughness_data)):
             raise ValueError("No valid roughness data in cropped region")
 
-        print(f"Roughness grid: {roughness_data.shape[0]}x{roughness_data.shape[1]}")
-        print(f"Valid roughness pixels: {np.sum(~np.isnan(roughness_data))} / {roughness_data.size}")
+        logger.debug(f"Roughness grid: {roughness_data.shape[0]}x{roughness_data.shape[1]} ({np.sum(~np.isnan(roughness_data))} valid pixels)")
 
         # Build shared roughness interpolator (NaN-fill + bilinear)
         interpolator = build_roughness_interpolator(roughness_data, roughness_transform, default_z0)
@@ -711,19 +703,18 @@ class BlockMeshGenerator:
         # Interpolate z0 at ground face centers
         face_z0_values = interpolator(ground_face_centers[:, [1, 0]])  # (y, x) order
         
-        print("Setting minimum roughness to 0.0002 m to avoid zero values")
+        logger.debug("Applying minimum roughness of 0.0002 m")
         face_z0_values = np.maximum(face_z0_values, 0.0002)
         # Check if any face centers fell outside roughness coverage
         outside_count = np.sum(face_z0_values == default_z0)
         if outside_count > 0:
-            print(f"WARNING: {outside_count} face centers fell outside roughness coverage, using default z0={default_z0}")
+            logger.warning(f"{outside_count} face centers outside roughness coverage, using default z0={default_z0}")
         
         # Statistics
-        print(f"\nZ0 statistics:")
-        print(f"  Min: {face_z0_values.min():.4f}")
-        print(f"  Max: {face_z0_values.max():.4f}")
-        print(f"  Mean: {face_z0_values.mean():.4f}")
-        print(f"  Median: {np.median(face_z0_values):.4f}")
+        logger.debug(
+            f"Z0 — min: {face_z0_values.min():.4f}, max: {face_z0_values.max():.4f}, "
+            f"mean: {face_z0_values.mean():.4f}, median: {np.median(face_z0_values):.4f}"
+        )
         
         # Create output directory
         output_path = Path(output_file)
@@ -746,9 +737,7 @@ class BlockMeshGenerator:
             
             f.write(")\n")
         
-        print(f"\nSuccessfully wrote z0 field to: {output_file}")
-        print(f"Total faces: {n_faces}")
-        print("="*60)
+        logger.debug(f"z0 field written to: {output_file} ({n_faces} faces)")
         
         return {
             'n_faces': n_faces,

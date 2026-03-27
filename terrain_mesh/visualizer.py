@@ -1,5 +1,6 @@
 """Visualization tools for terrain and grid data"""
 
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -8,6 +9,8 @@ from typing import Optional, Dict
 
 from .config import VisualizationConfig
 from .utils import rotate_coordinates, load_terrain_points
+
+logger = logging.getLogger(__name__)
 
 class TerrainVisualizer:
     """Handle visualization of input and output data"""
@@ -27,7 +30,7 @@ class TerrainVisualizer:
         if not self.config.create_plots:
             return
         
-        print("Creating boundary treatment visualization...")
+        logger.debug("Creating boundary treatment visualization...")
         
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle('Boundary Treatment Analysis', fontsize=16)
@@ -122,7 +125,7 @@ class TerrainVisualizer:
             plt.savefig(output_path, dpi=self.config.dpi, bbox_inches='tight')
             plt.close()
         
-        print(f"Boundary treatment plots saved: {output_path}")
+        logger.debug(f"Boundary treatment plots saved: {output_path}")
     
     def create_roughness_plots(self, roughness_data: np.ndarray, roughness_transform: object,
                            z0_stats: dict, output_dir: Path, terrain_map: Optional[str] = None):
@@ -130,7 +133,7 @@ class TerrainVisualizer:
         if not self.config.create_plots:
             return
         
-        print("Creating roughness visualization...")
+        logger.debug("Creating roughness visualization...")
         
         fig, axes = plt.subplots(1, 2, figsize=(16, 7))
         fig.suptitle('Surface Roughness (z0) Analysis', fontsize=16)
@@ -193,7 +196,7 @@ class TerrainVisualizer:
                                 continue  # Skip non-numeric lines
                 
                 z0_values = np.array(z0_values)
-                print(f"Read {len(z0_values)} z0 values from file")
+                logger.debug(f"Read {len(z0_values)} z0 values from file")
                 
                 # Get face centers
                 face_x, face_y, face_z0 = [], [], []
@@ -237,4 +240,4 @@ class TerrainVisualizer:
         plt.savefig(output_path, dpi=self.config.dpi, bbox_inches='tight')
         
         plt.close()
-        print(f"Roughness plots saved: {output_path}")
+        logger.debug(f"Roughness plots saved: {output_path}")

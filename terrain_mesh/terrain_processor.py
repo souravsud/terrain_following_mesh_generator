@@ -4,6 +4,7 @@ This module handles extraction and preprocessing of Digital Elevation Model (DEM
 data from various formats (GeoTIFF, DAT, NetCDF) with support for rotation,
 cropping, and coordinate transformations.
 """
+import logging
 from .config import TerrainConfig
 from .utils import rotate_coordinates,smooth_terrain_for_cfd
 from typing import Union, Tuple
@@ -17,6 +18,8 @@ from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from pyproj import Transformer
 import warnings
+
+logger = logging.getLogger(__name__)
 
 warnings.filterwarnings('ignore', category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -86,7 +89,7 @@ class TerrainProcessor:
         center_lon = config.center_lon
         if center_lat is None or center_lon is None:
             center_lat, center_lon = self._dem_centre_latlon(dem_path)
-            print(f"Auto-detected centre from DEM: lat={center_lat:.6f}, lon={center_lon:.6f}")
+            logger.debug(f"Auto-detected centre from DEM: lat={center_lat:.6f}, lon={center_lon:.6f}")
 
         # Get center coordinates (from config or metadata)
         if config.center_coordinates:
@@ -100,10 +103,10 @@ class TerrainProcessor:
                 with open(metadata_path) as f:
                     metadata = json.load(f)
                     center_utm = tuple(metadata['center_utm'])
-                    print(f"Loaded center UTM from metadata: {center_utm}")
+                    logger.debug(f"Loaded center UTM from metadata: {center_utm}")
             else:
                 # Fallback: convert lat/lon to UTM
-                print("Warning: No metadata found. Converting lat/lon to UTM...")
+                logger.debug("No metadata found, converting lat/lon to UTM...")
                 utm_crs = self.get_utm_crs(center_lon, center_lat)
                 center_utm = self.latlon_to_utm(center_lat, center_lon, utm_crs)
         
@@ -153,7 +156,7 @@ class TerrainProcessor:
         if self.centre_utm is None:
             raise ValueError("Must call extract_rotated_terrain() before extract_rotated_rmap()")
         
-        print("Cropping roughness map...")
+        logger.debug("Cropping roughness map...")
         
         roughness_data, transform, _, _, _ = self.crop_and_rotate_raster(
             raster_path=rmap_path,
@@ -200,7 +203,7 @@ class TerrainProcessor:
         raster_path = Path(raster_path)
         suffix = raster_path.suffix.lower()
         
-        print(f"Processing {suffix} file: {raster_path.name}")
+        logger.debug(f"Processing {suffix} file: {raster_path.name}")
         
         crop_size_m = crop_size_km * 1000
         
@@ -227,9 +230,9 @@ class TerrainProcessor:
                             "before processing roughness maps, or supply a GeoTIFF "
                             "that is already projected to UTM."
                         )
-                    print(
-                        f"  Geographic CRS detected ({src.crs.to_string()}). "
-                        f"Reprojecting to {self.utm_crs.to_string()}..."
+                    logger.debug(
+                        f"Geographic CRS detected ({src.crs.to_string()}), "
+                        f"reprojecting to {self.utm_crs.to_string()}..."
                     )
                     memfile = self._reproject_to_utm(src, self.utm_crs)
                     with memfile.open() as utm_src:
@@ -266,7 +269,7 @@ class TerrainProcessor:
         
         self.expanded_bounds = expanded_bounds
         
-        print(f"Expanded bounds (UTM): {expanded_bounds}")
+        logger.debug(f"Expanded bounds (UTM): {expanded_bounds}")
         
         # Convert to pixel coordinates
         left_px = int((expanded_bounds[0] - src.bounds.left) / src.res[0])
@@ -280,7 +283,7 @@ class TerrainProcessor:
         bottom_px = max(0, bottom_px)
         top_px = min(src.height, top_px)
         
-        print(f"Pixel window: ({left_px}, {bottom_px}, {right_px}, {top_px})")
+        logger.debug(f"Pixel window: ({left_px}, {bottom_px}, {right_px}, {top_px})")
         
         # Extract window
         window = rasterio.windows.Window.from_slices(
@@ -301,7 +304,7 @@ class TerrainProcessor:
         x_grid, y_grid = np.meshgrid(x_coords, y_coords)
         
         # Create rotation mask
-        print(f"Creating rotated crop mask (rotation: {rotation_deg}°)...")
+        logger.debug(f"Creating rotated crop mask (rotation: {rotation_deg}°)...")
         crop_mask = self.create_rotated_crop_mask(
             center_utm_x, center_utm_y, crop_size_m, rotation_deg, x_grid, y_grid
         )
@@ -310,7 +313,7 @@ class TerrainProcessor:
         cropped_data = expanded_data.copy()
         cropped_data[~crop_mask] = np.nan
         
-        print(f"Rotated crop completed. Valid pixels: {np.sum(crop_mask)} / {crop_mask.size}")
+        logger.debug(f"Rotated crop: {np.sum(crop_mask)}/{crop_mask.size} valid pixels")
         
         return cropped_data, expanded_transform, src.crs, src.res, crop_mask
     
@@ -320,7 +323,7 @@ class TerrainProcessor:
         Convert DAT file to rasterio MemoryFile.
         DAT files are already in UTM.
         """
-        print(f"Adapting DAT file: {dat_path}")
+        logger.debug(f"Adapting DAT file: {dat_path}")
         
         # Read DAT file
         with open(dat_path, 'r') as f:
@@ -374,7 +377,7 @@ class TerrainProcessor:
         """
 
         
-        print(f"Adapting NetCDF file: {nc_path}")
+        logger.debug(f"Adapting NetCDF file: {nc_path}")
         
         ds = xr.open_dataset(nc_path)
         
