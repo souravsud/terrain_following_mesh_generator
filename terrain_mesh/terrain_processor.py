@@ -165,6 +165,12 @@ class TerrainProcessor:
             rotation_deg=config.rotation_deg
         )
         
+        if config.roughness_smoothing_sigma > 0:
+            roughness_data = smooth_terrain_for_cfd(
+                roughness_data,
+                sigma=config.roughness_smoothing_sigma
+            )
+        
         return roughness_data, transform
     
     def crop_and_rotate_raster(
