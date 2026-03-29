@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 from typing import Tuple
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, distance_transform_edt
 from scipy.interpolate import RegularGridInterpolator
 
 
@@ -133,7 +133,10 @@ def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
             # Create temporary array for smoothing
             temp_array = np.zeros_like(elevation_data)
             temp_array[valid_mask] = valid_data
-            temp_array[~valid_mask] = np.mean(valid_data)  # Fill NaN with mean for smoothing
+            
+            # Fill NaN regions with nearest-neighbor values to avoid artificial boundaries
+            indices = distance_transform_edt(~valid_mask, return_distances=False, return_indices=True)
+            temp_array[~valid_mask] = temp_array[tuple(indices[:, ~valid_mask])]
             
             # Apply smoothing
             smoothed_temp = gaussian_filter(temp_array, sigma=sigma)
