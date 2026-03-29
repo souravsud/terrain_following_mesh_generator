@@ -4,6 +4,7 @@ terrain:
   crop_size_km: 30
   rotation_deg: 225
   smoothing_sigma: 0
+  roughness_smoothing_sigma: 0
   center_coordinates: false
   
 grid:

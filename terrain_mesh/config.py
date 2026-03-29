@@ -58,7 +58,8 @@ class TerrainConfig:
         center_lon: Center longitude of terrain region (decimal degrees).
                     If omitted, the center is automatically derived from the
                     geographic extent of the DEM file (GeoTIFF only).
-        smoothing_sigma: Gaussian smoothing sigma (0 = no smoothing)
+        smoothing_sigma: Gaussian smoothing sigma for DEM (0 = no smoothing)
+        roughness_smoothing_sigma: Gaussian smoothing sigma for roughness map (0 = no smoothing)
         center_coordinates: If True, the coordinate system is transformed such that the center is (0,0)
         
     Raises:
@@ -72,6 +73,7 @@ class TerrainConfig:
     center_lat: Optional[float] = None
     center_lon: Optional[float] = None
     smoothing_sigma: float = DEFAULT_GAUSSIAN_SMOOTHING_SIGMA
+    roughness_smoothing_sigma: float = 0
     center_coordinates: bool = False
 
     def __post_init__(self):
