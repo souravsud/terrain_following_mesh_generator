@@ -3,9 +3,72 @@ import os
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 from scipy.ndimage import gaussian_filter, distance_transform_edt
 from scipy.interpolate import RegularGridInterpolator
+
+
+# ESA WorldCover 2020/2021 land use class codes and their descriptions.
+# See https://esa-worldcover.org for the full product specification.
+WORLDCOVER_CLASS_NAMES: Dict[int, str] = {
+    10: "Tree cover",
+    20: "Shrubland",
+    30: "Grassland",
+    40: "Cropland",
+    50: "Built-up",
+    60: "Bare / sparse vegetation",
+    70: "Snow and ice",
+    80: "Permanent water bodies",
+    90: "Herbaceous wetland",
+    95: "Mangroves",
+    100: "Moss and lichen",
+}
+
+# Default surface roughness length z0 (metres) for each WorldCover class.
+# Values are representative of neutral stability ABL flow and are based on
+# established references (e.g. Wieringa 1992, Stull 1988).
+WORLDCOVER_Z0_LOOKUP: Dict[int, float] = {
+    10: 1.0,      # Tree cover        – tall closed-canopy forest
+    20: 0.1,      # Shrubland         – low woody vegetation
+    30: 0.03,     # Grassland         – low grass / meadow
+    40: 0.05,     # Cropland          – cultivated fields
+    50: 1.0,      # Built-up          – urban / industrial
+    60: 0.005,    # Bare / sparse     – desert, exposed rock
+    70: 0.001,    # Snow and ice      – smooth frozen surface
+    80: 0.0001,   # Water bodies      – lakes, rivers, sea
+    90: 0.05,     # Herbaceous wetland
+    95: 0.5,      # Mangroves         – dense coastal forest
+    100: 0.02,    # Moss and lichen
+}
+
+
+def prepare_roughness_from_worldcover(
+    worldcover_data: np.ndarray,
+    lookup: Optional[Dict[int, float]] = None,
+) -> np.ndarray:
+    """Convert a WorldCover land-use classification map to a roughness (z0) map.
+
+    Iterates over the lookup table and sets each pixel whose class code matches
+    to the corresponding z0 value.  Pixels whose class code is not present in
+    *lookup* (including NaN / no-data regions) are set to ``NaN``.
+
+    Args:
+        worldcover_data: 2-D integer array of ESA WorldCover class codes.
+        lookup: Mapping from class code (int) to z0 value (float).  Defaults
+            to :data:`WORLDCOVER_Z0_LOOKUP`.
+
+    Returns:
+        2-D ``float64`` array of z0 roughness values with the same shape as
+        *worldcover_data*.  Unknown class codes produce ``NaN``.
+    """
+    if lookup is None:
+        lookup = WORLDCOVER_Z0_LOOKUP
+
+    z0_map = np.full(worldcover_data.shape, np.nan, dtype=np.float64)
+    for class_code, z0_value in lookup.items():
+        z0_map[worldcover_data == class_code] = z0_value
+
+    return z0_map
 
 
 def build_roughness_interpolator(
