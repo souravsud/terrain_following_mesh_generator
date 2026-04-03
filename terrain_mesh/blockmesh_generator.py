@@ -5,7 +5,9 @@ from typing import Dict, List, Tuple
 from pathlib import Path
 
 from .config import MeshConfig
-from .utils import create_blockMesh_spacing, generate_region_coordinates, build_roughness_interpolator, load_terrain_points
+from .utils import (create_blockMesh_spacing, generate_region_coordinates,
+                    build_roughness_interpolator, load_terrain_points,
+                    get_valid_cell_indices)
 
 logger = logging.getLogger(__name__)
 
@@ -22,41 +24,24 @@ class BlockMeshGenerator:
         roughness_data: np.ndarray = None,
         roughness_transform: object = None,
     ):
-        """Wrapper method that uses MeshConfig"""
+        """Generate an OpenFOAM blockMeshDict with flexible z-direction grading.
 
-        return self._blockMeshDictCreator(
-            terrain_map=terrain_map,
-            output_dict_file=output_dict_file,
-            inlet_face_file=inlet_face_file,
-            domain_height=config.domain_height,
-            z_grading=config.z_grading,
-            total_z_cells=config.total_z_cells,
-            terrain_normal_first_layer=config.terrain_normal_first_layer,
-            patch_types=config.patch_types,
-            extract_inlet_face_info=config.extract_inlet_face_info,
-            roughness_data=roughness_data,
-            roughness_transform=roughness_transform,
-        )
-
-    def _blockMeshDictCreator(
-        self,
-        terrain_map="maps/terrain_map.npz",
-        output_dict_file="system/blockMeshDict",
-        inlet_face_file="0/include/inletFaceInfo.txt",
-        domain_height=4000.0,
-        z_grading=None,
-        total_z_cells=20,
-        patch_types=None,
-        extract_inlet_face_info=True,
-        terrain_normal_first_layer = False,
-        roughness_data=None,
-        roughness_transform=None,
-    ):
+        Args:
+            config: MeshConfig instance with domain and grading settings.
+            terrain_map: Path to the terrain NPZ map produced by the pipeline.
+            output_dict_file: Destination path for the blockMeshDict file.
+            inlet_face_file: Destination path for the inlet face information file.
+            roughness_data: Optional 2-D roughness array for z0 assignment.
+            roughness_transform: Affine transform for *roughness_data*.
         """
-        Generates an OpenFOAM blockMeshDict with flexible z-direction grading.
-        """
+        domain_height = config.domain_height
+        z_grading = config.z_grading
+        total_z_cells = config.total_z_cells if config.total_z_cells is not None else 20
+        patch_types = config.patch_types
+        extract_inlet_face_info = config.extract_inlet_face_info
+        terrain_normal_first_layer = config.terrain_normal_first_layer
 
-        # Set default patch types if not provided
+        # patch_types guaranteed non-None by MeshConfig.__post_init__, but guard anyway
         if patch_types is None:
             patch_types = {
                 "ground": "wall",
@@ -67,8 +52,8 @@ class BlockMeshGenerator:
             }
 
         # Calculate z-direction grading specification
-        z_grading_spec,first_cell_height  = self._calculate_z_grading_spec(
-            domain_height, z_grading, total_z_cells,terrain_normal_first_layer
+        z_grading_spec, first_cell_height = self._calculate_z_grading_spec(
+            domain_height, z_grading, total_z_cells, terrain_normal_first_layer
         )
 
         try:
@@ -77,8 +62,6 @@ class BlockMeshGenerator:
             logger.debug(f"Grid: {nx}x{ny} ({points.shape[0]} points)")
 
             # Extract coordinates
-            x_coords = points[:, :, 0]  # (ny, nx)
-            y_coords = points[:, :, 1]  # (ny, nx)
             z_coords = points[:, :, 2]  # (ny, nx)
 
             # Create validity mask (not NaN)
@@ -91,7 +74,7 @@ class BlockMeshGenerator:
             if terrain_normal_first_layer:
                 logger.debug("Calculating terrain normals...")
                 normals = self.calculate_vertex_normals(points, valid_mask, nx, ny)
-            
+
             # Create vertex mapping (only for valid points)
             vertex_map = np.full((ny, nx), -1, dtype=int)  # -1 for invalid
             valid_vertices = []
@@ -107,7 +90,7 @@ class BlockMeshGenerator:
                         vertex_counter += 1
 
             num_ground_vertices = vertex_counter
-            
+
             if terrain_normal_first_layer:
                 # Map first layer top vertices (offset by first_cell_height along normal)
                 for j in range(ny):
@@ -115,105 +98,75 @@ class BlockMeshGenerator:
                         if valid_mask[j, i]:
                             x, y, z = points[j, i]
                             normal = normals[j, i]
-                            # Offset along normal
-                            x_offset = x + normal[0] * first_cell_height
-                            y_offset = y + normal[1] * first_cell_height
-                            z_offset = z + normal[2] * first_cell_height
-                            valid_vertices.append((x_offset, y_offset, z_offset))
+                            valid_vertices.append((
+                                x + normal[0] * first_cell_height,
+                                y + normal[1] * first_cell_height,
+                                z + normal[2] * first_cell_height,
+                            ))
                             vertex_counter += 1
-                
-                num_first_layer_vertices = vertex_counter
-                
-                # Map valid sky vertices  
-                for j in range(ny):
-                    for i in range(nx):
-                        if valid_mask[j, i]:
-                            x, y, z = points[j, i]
-                            valid_vertices.append((x, y, domain_height))  # Sky vertex
-                            vertex_counter += 1
-                
-                
-                logger.debug(f"Vertices: {num_ground_vertices} ground + {num_ground_vertices} first_layer + {num_ground_vertices} sky = {len(valid_vertices)}")
-            else:
 
                 # Map valid sky vertices
                 for j in range(ny):
                     for i in range(nx):
                         if valid_mask[j, i]:
                             x, y, z = points[j, i]
-                            valid_vertices.append((x, y, domain_height))  # Sky vertex
+                            valid_vertices.append((x, y, domain_height))
+                            vertex_counter += 1
+
+                logger.debug(f"Vertices: {num_ground_vertices} ground + {num_ground_vertices} first_layer + {num_ground_vertices} sky = {len(valid_vertices)}")
+            else:
+                # Map valid sky vertices
+                for j in range(ny):
+                    for i in range(nx):
+                        if valid_mask[j, i]:
+                            x, y, z = points[j, i]
+                            valid_vertices.append((x, y, domain_height))
                             vertex_counter += 1
                 logger.debug(f"Vertices: {num_ground_vertices} ground + {num_ground_vertices} sky = {len(valid_vertices)}")
 
             # Find valid blocks and store positions
             valid_blocks_layer1 = []
             valid_blocks_layer2plus = []
-            block_positions = {}  # Store (i,j) -> block_vertices mapping
+            block_positions = {}  # (i, j) -> block_vertices mapping
 
             if terrain_normal_first_layer:
-                
-                for j in range(ny - 1):
-                    for i in range(nx - 1):
-                        corners_valid = (valid_mask[j, i] and valid_mask[j, i+1] and 
-                                    valid_mask[j+1, i+1] and valid_mask[j+1, i])
-                        
-                        if corners_valid:
-                            # Ground layer vertex indices
-                            v0 = vertex_map[j, i]
-                            v1 = vertex_map[j, i+1] 
-                            v2 = vertex_map[j+1, i+1]
-                            v3 = vertex_map[j+1, i]
-                            
-                            # First layer top vertex indices
-                            v4 = v0 + num_ground_vertices
-                            v5 = v1 + num_ground_vertices
-                            v6 = v2 + num_ground_vertices
-                            v7 = v3 + num_ground_vertices
-                            
-                            # First layer block (ground to first_layer_top)
-                            block_layer1 = (v0, v1, v2, v3, v4, v5, v6, v7, 1)
-                            valid_blocks_layer1.append(block_layer1)
-                            
-                            # Sky vertex indices
-                            v8 = v0 + 2 * num_ground_vertices
-                            v9 = v1 + 2 * num_ground_vertices
-                            v10 = v2 + 2 * num_ground_vertices
-                            v11 = v3 + 2 * num_ground_vertices
-                            
-                            # Remaining layers block (first_layer_top to sky)
-                            num_cells_remaining = total_z_cells - 1
-                            block_layer2plus = (v4, v5, v6, v7, v8, v9, v10, v11, num_cells_remaining)
-                            valid_blocks_layer2plus.append(block_layer2plus)
-                            
-                            block_positions[(i, j)] = (v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11)
-                
+                for j, i in get_valid_cell_indices(valid_mask):
+                    v0 = vertex_map[j, i]
+                    v1 = vertex_map[j, i + 1]
+                    v2 = vertex_map[j + 1, i + 1]
+                    v3 = vertex_map[j + 1, i]
+
+                    v4 = v0 + num_ground_vertices
+                    v5 = v1 + num_ground_vertices
+                    v6 = v2 + num_ground_vertices
+                    v7 = v3 + num_ground_vertices
+
+                    valid_blocks_layer1.append((v0, v1, v2, v3, v4, v5, v6, v7, 1))
+
+                    v8 = v0 + 2 * num_ground_vertices
+                    v9 = v1 + 2 * num_ground_vertices
+                    v10 = v2 + 2 * num_ground_vertices
+                    v11 = v3 + 2 * num_ground_vertices
+
+                    num_cells_remaining = total_z_cells - 1
+                    valid_blocks_layer2plus.append((v4, v5, v6, v7, v8, v9, v10, v11, num_cells_remaining))
+                    block_positions[(i, j)] = (v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11)
+
                 logger.debug(f"Blocks: {len(valid_blocks_layer1)} first layer + {len(valid_blocks_layer2plus)} upper layer (skipped {(nx-1)*(ny-1) - len(valid_blocks_layer1)} NaN blocks)")
-                  
+
             else:
-                for j in range(ny - 1):
-                    for i in range(nx - 1):
-                        # Check if all 4 corners are valid
-                        corners_valid = (
-                            valid_mask[j, i]
-                            and valid_mask[j, i + 1]
-                            and valid_mask[j + 1, i + 1]
-                            and valid_mask[j + 1, i]
-                        )
+                for j, i in get_valid_cell_indices(valid_mask):
+                    v0 = vertex_map[j, i]
+                    v1 = vertex_map[j, i + 1]
+                    v2 = vertex_map[j + 1, i + 1]
+                    v3 = vertex_map[j + 1, i]
+                    v4 = v0 + num_ground_vertices
+                    v5 = v1 + num_ground_vertices
+                    v6 = v2 + num_ground_vertices
+                    v7 = v3 + num_ground_vertices
 
-                        if corners_valid:
-                            # Get vertex indices
-                            v0 = vertex_map[j, i]
-                            v1 = vertex_map[j, i + 1]
-                            v2 = vertex_map[j + 1, i + 1]
-                            v3 = vertex_map[j + 1, i]
-                            v4 = v0 + num_ground_vertices  # Sky vertices
-                            v5 = v1 + num_ground_vertices
-                            v6 = v2 + num_ground_vertices
-                            v7 = v3 + num_ground_vertices
-
-                            block = (v0, v1, v2, v3, v4, v5, v6, v7, total_z_cells)
-                            valid_blocks_layer1.append(block)
-                            block_positions[(i, j)] = (v0, v1, v2, v3, v4, v5, v6, v7)
+                    valid_blocks_layer1.append((v0, v1, v2, v3, v4, v5, v6, v7, total_z_cells))
+                    block_positions[(i, j)] = (v0, v1, v2, v3, v4, v5, v6, v7)
 
                 logger.debug(f"Blocks: {len(valid_blocks_layer1)} valid (skipped {(nx-1)*(ny-1) - len(valid_blocks_layer1)} NaN blocks)")
 
@@ -223,7 +176,7 @@ class BlockMeshGenerator:
             )
 
             if extract_inlet_face_info:
-                inlet_face_info = self.save_inlet_face_info(
+                self.save_inlet_face_info(
                     block_positions,
                     boundary_patches,
                     points,
@@ -264,7 +217,7 @@ class BlockMeshGenerator:
                     for v0, v1, v2, v3, v4, v5, v6, v7, nz in valid_blocks_layer1:
                         f.write(f"    hex ({v0} {v1} {v2} {v3} {v4} {v5} {v6} {v7}) ")
                         f.write(f"(1 1 1) simpleGrading (1 1 1)\n")
-                    
+
                     # Upper layer blocks (with expansion ratio)
                     for v0, v1, v2, v3, v4, v5, v6, v7, nz in valid_blocks_layer2plus:
                         f.write(f"    hex ({v0} {v1} {v2} {v3} {v4} {v5} {v6} {v7}) ")
@@ -325,6 +278,7 @@ class BlockMeshGenerator:
 
         except Exception as e:
             logger.error(f"Failed to generate blockMeshDict: {e}")
+
 
     def calculate_vertex_normals(self, points, valid_mask, nx, ny):
         """
@@ -664,26 +618,18 @@ class BlockMeshGenerator:
         valid_mask = ~np.isnan(z_coords)
         
         ground_face_centers = []
-        
+
         # Iterate through cells (same order as blockMeshDict ground faces)
-        for j in range(ny - 1):
-            for i in range(nx - 1):
-                # Check if all 4 corners are valid (same as blockMeshDict logic)
-                corners_valid = (
-                    valid_mask[j, i] and valid_mask[j, i+1] and 
-                    valid_mask[j+1, i+1] and valid_mask[j+1, i]
-                )
-                
-                if corners_valid:
-                    # Get 4 corner points of ground face
-                    p0 = points[j, i, :2]       # (x, y) only
-                    p1 = points[j, i+1, :2]
-                    p2 = points[j+1, i+1, :2]
-                    p3 = points[j+1, i, :2]
-                    
-                    # Calculate face center
-                    face_center = (p0 + p1 + p2 + p3) / 4.0
-                    ground_face_centers.append(face_center)
+        for j, i in get_valid_cell_indices(valid_mask):
+            # Get 4 corner points of ground face
+            p0 = points[j, i, :2]       # (x, y) only
+            p1 = points[j, i+1, :2]
+            p2 = points[j+1, i+1, :2]
+            p3 = points[j+1, i, :2]
+
+            # Calculate face center
+            face_center = (p0 + p1 + p2 + p3) / 4.0
+            ground_face_centers.append(face_center)
         
         ground_face_centers = np.array(ground_face_centers)
         n_faces = len(ground_face_centers)

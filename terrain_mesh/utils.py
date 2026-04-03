@@ -3,9 +3,48 @@ import os
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Tuple
+from typing import List, Optional, Tuple
 from scipy.ndimage import gaussian_filter, distance_transform_edt
 from scipy.interpolate import RegularGridInterpolator
+
+
+_GRADING_TOLERANCE = 1e-6
+
+
+def validate_grading_fractions(grading: List[Tuple[float, float, float]], name: str) -> None:
+    """Validate that grading length and cell fractions each sum to 1.0.
+
+    Args:
+        grading: List of (length_fraction, cell_fraction, expansion_ratio) tuples.
+        name: Name of the grading parameter, used in error messages.
+
+    Raises:
+        ValueError: If fractions don't sum to 1.0 within tolerance.
+    """
+    length_sum = sum(spec[0] for spec in grading)
+    cell_sum = sum(spec[1] for spec in grading)
+    if abs(length_sum - 1.0) > _GRADING_TOLERANCE:
+        raise ValueError(f"{name} length fractions must sum to 1.0, got {length_sum}")
+    if abs(cell_sum - 1.0) > _GRADING_TOLERANCE:
+        raise ValueError(f"{name} cell fractions must sum to 1.0, got {cell_sum}")
+
+
+def get_valid_cell_indices(valid_mask: np.ndarray):
+    """Yield (j, i) index pairs for all 2×2 grid cells whose four corners are valid.
+
+    Args:
+        valid_mask: Boolean array of shape (ny, nx) where True marks valid points.
+
+    Returns:
+        An iterable of (j, i) integer tuples such that valid_mask[j, i],
+        valid_mask[j, i+1], valid_mask[j+1, i+1], and valid_mask[j+1, i] are
+        all True.
+    """
+    cell_valid = (
+        valid_mask[:-1, :-1] & valid_mask[:-1, 1:] &
+        valid_mask[1:, 1:] & valid_mask[1:, :-1]
+    )
+    return zip(*np.where(cell_valid))
 
 
 def build_roughness_interpolator(
@@ -116,12 +155,15 @@ def rotate_coordinates(x, y, center_x, center_y, rotation_deg, inverse=False, ge
     return x_rot, y_rot
 
 def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
-    """
-    Smooth terrain data for better CFD mesh quality
-    
-    Parameters:
-    - sigma: smoothing strength (higher = more smoothing)
-    - preserve_nan: keep NaN areas (outside rotated crop) as NaN
+    """Smooth terrain data for better CFD mesh quality.
+
+    Args:
+        elevation_data: 2D numpy array of elevation values.
+        sigma: Smoothing strength (higher = more smoothing).
+        preserve_nan: If True, keep NaN areas (outside rotated crop) as NaN.
+
+    Returns:
+        Smoothed elevation array of the same shape.
     """
     if preserve_nan:
         valid_mask = ~np.isnan(elevation_data)
@@ -148,17 +190,58 @@ def smooth_terrain_for_cfd(elevation_data, sigma=2.0, preserve_nan=True):
     
     return smoothed
 
-def write_metadata(**kwargs):
+def write_metadata(
+    dem_path,
+    rmap_path,
+    terrain_config,
+    grid_config,
+    mesh_config,
+    boundary_config,
+    visualization_config,
+    elevation_data: np.ndarray,
+    treated_elevation: np.ndarray,
+    transform,
+    crs,
+    min_elevation: float,
+    centre_utm,
+    pixel_res,
+    grid,
+    terrain_map_path,
+    blockmesh_path,
+    output_dir,
+    metadata_path,
+) -> None:
     """Save pipeline metadata to a JSON file.
+
+    Args:
+        dem_path: Path to the DEM input file.
+        rmap_path: Optional path to the roughness map input file.
+        terrain_config: TerrainConfig instance.
+        grid_config: GridConfig instance.
+        mesh_config: MeshConfig instance.
+        boundary_config: BoundaryConfig instance.
+        visualization_config: VisualizationConfig instance.
+        elevation_data: Raw elevation array before boundary treatment.
+        treated_elevation: Elevation array after boundary treatment.
+        transform: Affine transform for the processed raster.
+        crs: Coordinate reference system of the processed raster.
+        min_elevation: Minimum terrain elevation (metres).
+        centre_utm: (x, y) UTM centre coordinates.
+        pixel_res: Pixel resolution tuple (x_res, y_res).
+        grid: PyVista StructuredGrid surface mesh.
+        terrain_map_path: Path to the saved terrain NPZ map.
+        blockmesh_path: Path to the saved blockMeshDict, or None.
+        output_dir: Pipeline output directory path.
+        metadata_path: Destination path for the JSON metadata file.
     """
     # Delay import to avoid circular imports at module level
     from terrain_mesh import __version__
 
-    output_dir = Path(kwargs['output_dir'])
+    output_dir = Path(output_dir)
 
     # Store only the filename for machine-specific input paths
-    dem_filename = Path(kwargs['dem_path']).name if kwargs['dem_path'] else None
-    roughness_filename = Path(kwargs['rmap_path']).name if kwargs['rmap_path'] else None
+    dem_filename = Path(dem_path).name if dem_path else None
+    roughness_filename = Path(rmap_path).name if rmap_path else None
 
     def _relative(path):
         """Return path relative to output_dir, or just the filename if that fails."""
@@ -187,110 +270,117 @@ def write_metadata(**kwargs):
         },
 
         "output_files": {
-            "terrain_map": _relative(kwargs['terrain_map_path']),
-            "blockmesh_dict": _relative(kwargs['blockmesh_path']),
-            "metadata_file": _relative(kwargs['metadata_path']),
+            "terrain_map": _relative(terrain_map_path),
+            "blockmesh_dict": _relative(blockmesh_path),
+            "metadata_file": _relative(metadata_path),
         },
 
         "configurations": {
             "terrain": {
-                "center_lat": kwargs['terrain_config'].center_lat,
-                "center_lon": kwargs['terrain_config'].center_lon,
-                "easting": kwargs['centre_utm'][1] ,
-                "northing": kwargs['centre_utm'][0],
-                "center_utm": kwargs['terrain_config'].center_coordinates,
-                "crop_size_km": kwargs['terrain_config'].crop_size_km,
-                "rotation_deg": kwargs['terrain_config'].rotation_deg,
-                "smoothing_sigma": kwargs['terrain_config'].smoothing_sigma,
+                "center_lat": terrain_config.center_lat,
+                "center_lon": terrain_config.center_lon,
+                "easting": centre_utm[1],
+                "northing": centre_utm[0],
+                "center_utm": terrain_config.center_coordinates,
+                "crop_size_km": terrain_config.crop_size_km,
+                "rotation_deg": terrain_config.rotation_deg,
+                "smoothing_sigma": terrain_config.smoothing_sigma,
             },
 
             "grid": {
-                "nx": kwargs['grid_config'].nx,
-                "ny": kwargs['grid_config'].ny,
-                "x_grading": kwargs['grid_config'].x_grading,
-                "y_grading": kwargs['grid_config'].y_grading,
+                "nx": grid_config.nx,
+                "ny": grid_config.ny,
+                "x_grading": grid_config.x_grading,
+                "y_grading": grid_config.y_grading,
             },
 
             "mesh": {
-                "domain_height_m": kwargs['mesh_config'].domain_height,
-                "min_terrain_elevation_m": kwargs['min_elevation'],
-                "terrain_normal_first_layer": kwargs['mesh_config'].terrain_normal_first_layer,
-                "total_z_cells": kwargs['mesh_config'].total_z_cells,
-                "z_grading": kwargs['mesh_config'].z_grading,
-                "patch_types": kwargs['mesh_config'].patch_types,
-            } if kwargs['mesh_config'] else None,
+                "domain_height_m": mesh_config.domain_height,
+                "min_terrain_elevation_m": min_elevation,
+                "terrain_normal_first_layer": mesh_config.terrain_normal_first_layer,
+                "total_z_cells": mesh_config.total_z_cells,
+                "z_grading": mesh_config.z_grading,
+                "patch_types": mesh_config.patch_types,
+            } if mesh_config else None,
 
             "boundary": {
-                "aoi_fraction": kwargs['boundary_config'].aoi_fraction,
-                "boundary_mode": kwargs['boundary_config'].boundary_mode,
-                "flat_boundary_thickness_fraction": kwargs['boundary_config'].flat_boundary_thickness_fraction,
-                "enabled_boundaries": kwargs['boundary_config'].enabled_boundaries,
-                "smoothing_method": kwargs['boundary_config'].smoothing_method,
-                "kernel_progression": kwargs['boundary_config'].kernel_progression,
-                "base_kernel_size": kwargs['boundary_config'].base_kernel_size,
-                "max_kernel_size": kwargs['boundary_config'].max_kernel_size,
-                "progression_rate": kwargs['boundary_config'].progression_rate,
-                "boundary_flatness_mode": kwargs['boundary_config'].boundary_flatness_mode,
-                "uniform_elevation": kwargs['boundary_config'].uniform_elevation,
+                "aoi_fraction": boundary_config.aoi_fraction,
+                "boundary_mode": boundary_config.boundary_mode,
+                "flat_boundary_thickness_fraction": boundary_config.flat_boundary_thickness_fraction,
+                "enabled_boundaries": boundary_config.enabled_boundaries,
+                "smoothing_method": boundary_config.smoothing_method,
+                "kernel_progression": boundary_config.kernel_progression,
+                "base_kernel_size": boundary_config.base_kernel_size,
+                "max_kernel_size": boundary_config.max_kernel_size,
+                "progression_rate": boundary_config.progression_rate,
+                "boundary_flatness_mode": boundary_config.boundary_flatness_mode,
+                "uniform_elevation": boundary_config.uniform_elevation,
             },
 
             "visualization": {
-                "create_plots": kwargs['visualization_config'].create_plots,
-                "show_grid_lines": kwargs['visualization_config'].show_grid_lines,
-                "save_high_res": kwargs['visualization_config'].save_high_res,
-                "plot_format": kwargs['visualization_config'].plot_format,
-                "dpi": kwargs['visualization_config'].dpi,
+                "create_plots": visualization_config.create_plots,
+                "show_grid_lines": visualization_config.show_grid_lines,
+                "save_high_res": visualization_config.save_high_res,
+                "plot_format": visualization_config.plot_format,
+                "dpi": visualization_config.dpi,
             },
         },
 
         "processing_results": {
             "geographic_coverage": {
-                "center_lat_deg": kwargs['terrain_config'].center_lat,
-                "center_lon_deg": kwargs['terrain_config'].center_lon,
-                "domain_size_km": kwargs['terrain_config'].crop_size_km,
-                "wind_direction_deg": kwargs['terrain_config'].rotation_deg,
+                "center_lat_deg": terrain_config.center_lat,
+                "center_lon_deg": terrain_config.center_lon,
+                "domain_size_km": terrain_config.crop_size_km,
+                "wind_direction_deg": terrain_config.rotation_deg,
             },
 
             "coordinate_system": {
-                "crs": str(kwargs['crs']),
-                "pixel_resolution_m": kwargs['pixel_res'],
+                "crs": str(crs),
+                "pixel_resolution_m": pixel_res,
                 "transform": (
-                    list(kwargs['transform'])
-                    if hasattr(kwargs['transform'], '__iter__')
-                    else str(kwargs['transform'])
+                    list(transform)
+                    if hasattr(transform, '__iter__')
+                    else str(transform)
                 ),
             },
 
             "elevation_statistics": {
                 "units": "meters above mean sea level (MSL)",
-                "original": get_array_stats(kwargs['elevation_data']),
-                "treated": get_array_stats(kwargs['treated_elevation']),
+                "original": get_array_stats(elevation_data),
+                "treated": get_array_stats(treated_elevation),
             },
 
             "grid_statistics": {
                 "units": "meters",
                 "number_of_points": (
-                    kwargs['grid'].GetNumberOfPoints()
-                    if hasattr(kwargs['grid'], 'GetNumberOfPoints') else None
+                    grid.GetNumberOfPoints()
+                    if hasattr(grid, 'GetNumberOfPoints') else None
                 ),
                 "number_of_cells": (
-                    kwargs['grid'].GetNumberOfCells()
-                    if hasattr(kwargs['grid'], 'GetNumberOfCells') else None
+                    grid.GetNumberOfCells()
+                    if hasattr(grid, 'GetNumberOfCells') else None
                 ),
                 "bounds": (
-                    list(kwargs['grid'].GetBounds())
-                    if hasattr(kwargs['grid'], 'GetBounds') else None
+                    list(grid.GetBounds())
+                    if hasattr(grid, 'GetBounds') else None
                 ),
             },
         },
     }
 
     # Save to file
-    with open(kwargs['metadata_path'], 'w') as f:
+    with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2, default=str)
 
 def get_array_stats(data: np.ndarray) -> dict:
-    """Helper to extract statistics from numpy array"""
+    """Extract summary statistics from a numpy array, ignoring NaN values.
+
+    Args:
+        data: Input numpy array (may contain NaN).
+
+    Returns:
+        Dict with keys ``shape``, ``min``, ``max``, ``mean``, ``std``.
+    """
     return {
         "shape": list(data.shape),
         "min": float(np.nanmin(data)),
@@ -301,20 +391,14 @@ def get_array_stats(data: np.ndarray) -> dict:
 
 
 def generate_region_coordinates(n_cells, expansion_ratio):
-    """
-    Generate coordinates within a single region [0,1] with given expansion ratio.
+    """Generate coordinates within a single region [0, 1] with a given expansion ratio.
 
-    Parameters:
-    -----------
-    n_cells : int
-        Number of cells in this region
-    expansion_ratio : float
-        Ratio of last_cell_size/first_cell_size
+    Args:
+        n_cells: Number of cells in this region.
+        expansion_ratio: Ratio of last_cell_size / first_cell_size.
 
     Returns:
-    --------
-    np.ndarray
-        Coordinates from 0 to 1 for this region
+        np.ndarray: Coordinate array from 0 to 1 for this region.
     """
     if n_cells <= 1:
         return np.array([0.0, 1.0])
@@ -337,23 +421,17 @@ def generate_region_coordinates(n_cells, expansion_ratio):
 
 
 def create_blockMesh_spacing(n_points, grading_spec):
-    """
-    Create variable spacing coordinates from 0 to 1 using blockMesh-style grading.
+    """Create variable spacing coordinates from 0 to 1 using blockMesh-style grading.
 
-    Parameters:
-    -----------
-    n_points : int
-        Total number of points
-    grading_spec : list of tuples
-        [(length_fraction, cell_fraction, expansion_ratio), ...]
-        - length_fraction: fraction of domain length for this region
-        - cell_fraction: fraction of total cells for this region
-        - expansion_ratio: last_cell_size/first_cell_size in this region
+    Args:
+        n_points: Total number of points (cells + 1).
+        grading_spec: List of ``(length_fraction, cell_fraction, expansion_ratio)``
+            tuples. ``length_fraction`` is the fraction of domain length for the
+            region, ``cell_fraction`` is the fraction of total cells, and
+            ``expansion_ratio`` is last_cell_size / first_cell_size in the region.
 
     Returns:
-    --------
-    np.ndarray
-        Coordinate array from 0 to 1 with blockMesh-style spacing
+        np.ndarray: Coordinate array from 0 to 1 with blockMesh-style spacing.
     """
     total_cells = n_points - 1
 
@@ -361,10 +439,7 @@ def create_blockMesh_spacing(n_points, grading_spec):
     cell_fractions = np.array([spec[1] for spec in grading_spec])
     expansion_ratios = np.array([spec[2] for spec in grading_spec])
 
-    if abs(length_fractions.sum() - 1.0) > 1e-6:
-        raise ValueError(f"Length fractions sum to {length_fractions.sum():.6f}, must sum to 1.0")
-    if abs(cell_fractions.sum() - 1.0) > 1e-6:
-        raise ValueError(f"Cell fractions sum to {cell_fractions.sum():.6f}, must sum to 1.0")
+    validate_grading_fractions(grading_spec, "grading_spec")
 
     target_cells = cell_fractions * total_cells
     actual_cells = np.round(target_cells).astype(int)

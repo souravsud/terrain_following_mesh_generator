@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from .config import VisualizationConfig
-from .utils import rotate_coordinates, load_terrain_points
+from .utils import rotate_coordinates, load_terrain_points, get_valid_cell_indices
 
 logger = logging.getLogger(__name__)
 
@@ -201,16 +201,13 @@ class TerrainVisualizer:
                 # Get face centers
                 face_x, face_y, face_z0 = [], [], []
                 idx = 0
-                for j in range(ny - 1):
-                    for i in range(nx - 1):
-                        if (valid_mask[j, i] and valid_mask[j, i+1] and 
-                            valid_mask[j+1, i+1] and valid_mask[j+1, i]):
-                            center = (points[j, i, :2] + points[j, i+1, :2] + 
-                                    points[j+1, i+1, :2] + points[j+1, i, :2]) / 4.0
-                            face_x.append(center[0])
-                            face_y.append(center[1])
-                            face_z0.append(z0_values[idx])
-                            idx += 1
+                for j, i in get_valid_cell_indices(valid_mask):
+                    center = (points[j, i, :2] + points[j, i+1, :2] +
+                              points[j+1, i+1, :2] + points[j+1, i, :2]) / 4.0
+                    face_x.append(center[0])
+                    face_y.append(center[1])
+                    face_z0.append(z0_values[idx])
+                    idx += 1
                 
                 scatter = ax.scatter(face_x, face_y, c=face_z0, cmap='YlOrBr', s=5, alpha=0.8,
                                 norm=LogNorm(vmin=max(0.0001, min(face_z0)), vmax=max(face_z0)))

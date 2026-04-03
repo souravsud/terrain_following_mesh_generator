@@ -238,7 +238,7 @@ class TerrainMeshPipeline:
                 terrain_map_path=terrain_map_path,
                 blockmesh_path=blockmesh_path,
                 output_dir=output_dir,
-                metadata_path=metadata_path
+                metadata_path=metadata_path,
             )
             logger.debug(f"Metadata saved to: {metadata_path}")
         

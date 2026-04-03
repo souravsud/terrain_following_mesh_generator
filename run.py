@@ -24,8 +24,6 @@ def setup_logging(verbose: bool = False):
     Args:
         verbose: If True, set log level to DEBUG with full format, otherwise INFO with minimal format
     """
-    import logging
-    
     if verbose:
         level = logging.DEBUG
         fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'

@@ -8,35 +8,16 @@ This module provides dataclass-based configuration for:
 - Visualization options
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Dict, Any, Union
 import yaml
+from .utils import validate_grading_fractions
 
 # Constants
 DEFAULT_GAUSSIAN_SMOOTHING_SIGMA = 2.0  # Default sigma for Gaussian terrain smoothing
 MIN_GRID_DIMENSION = 2
-GRADING_TOLERANCE = 1e-6  # Tolerance for floating-point comparison in grading validation
 DEFAULT_DOMAIN_HEIGHT = 4000.0
 DEFAULT_Z_CELLS = 10
-
-
-def _validate_grading(grading: List[Tuple[float, float, float]], name: str) -> None:
-    """Validate that grading fractions sum to 1.0.
-
-    Args:
-        grading: List of (length_fraction, cell_fraction, expansion_ratio) tuples
-        name: Name of the grading parameter for error messages
-
-    Raises:
-        ValueError: If fractions don't sum to 1.0 within tolerance
-    """
-    length_sum = sum(spec[0] for spec in grading)
-    cell_sum = sum(spec[1] for spec in grading)
-
-    if abs(length_sum - 1.0) > GRADING_TOLERANCE:
-        raise ValueError(f"{name} length fractions must sum to 1.0, got {length_sum}")
-    if abs(cell_sum - 1.0) > GRADING_TOLERANCE:
-        raise ValueError(f"{name} cell fractions must sum to 1.0, got {cell_sum}")
 
 
 DEFAULT_AOI_FRACTION = 0.4
@@ -117,9 +98,9 @@ class GridConfig:
             )
 
         if self.x_grading:
-            _validate_grading(self.x_grading, "x_grading")
+            validate_grading_fractions(self.x_grading, "x_grading")
         if self.y_grading:
-            _validate_grading(self.y_grading, "y_grading")
+            validate_grading_fractions(self.y_grading, "y_grading")
 
 
 @dataclass
@@ -164,7 +145,7 @@ class MeshConfig:
             }
         
         if self.z_grading:
-            _validate_grading(self.z_grading, "z_grading")
+            validate_grading_fractions(self.z_grading, "z_grading")
 
 
 @dataclass
@@ -222,7 +203,7 @@ class BoundaryConfig:
 
     # Boundary sampling parameters
     flat_boundary_thickness_fraction: float = DEFAULT_FLAT_BOUNDARY_THICKNESS
-    enabled_boundaries: List[str] = None  # For directional mode ['east', 'west']
+    enabled_boundaries: Optional[List[str]] = field(default=None)  # For directional mode ['east', 'west']
 
     # Progressive smoothing parameters
     smoothing_method: str = "mean"  # 'gaussian', 'mean', 'median'
@@ -235,22 +216,12 @@ class BoundaryConfig:
     boundary_flatness_mode: str = "heavy_smooth"  # 'heavy_smooth', 'blend_target'
     uniform_elevation: Optional[float] = None  # Override calculated boundary height
 
-    # Legacy parameters (for backward compatibility if needed)
-    flat_fraction: float = 0.05  # Not used in progressive smoothing
-    flat_boundaries: List[str] = None  # Not used in progressive smoothing
-    transition_smoothing_sigma: float = 3.0  # Not used in progressive smoothing
-    transition_iterations: int = 10  # Not used in progressive smoothing
-
     def __post_init__(self):
         if self.enabled_boundaries is None:
             if self.boundary_mode == "directional":
                 self.enabled_boundaries = ["east", "west"]
             else:
                 self.enabled_boundaries = ["uniform"]
-
-        # Legacy compatibility
-        if self.flat_boundaries is None:
-            self.flat_boundaries = ["north", "south", "east", "west"]
 
 
 def load_config(config_path: str) -> Dict[str, Any]:

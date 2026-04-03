@@ -9,6 +9,9 @@ from .utils import rotate_coordinates
 
 logger = logging.getLogger(__name__)
 
+_SMOOTHING_CHUNK_SIZE = 10000  # Number of pixels processed per chunk in progressive smoothing
+
+
 class BoundaryTreatment:
     """4-zone boundary smoothing: AOI → Transition → Blend → Flat"""
     
@@ -34,12 +37,9 @@ class BoundaryTreatment:
         boundary_elevations = self._calculate_boundary_heights_from_strips(
             elevation_cleaned, crop_mask, config, rotation_deg)
         
-        # Apply 4-zone treatment
-        result = self._apply_four_zone_treatment(
+        # Apply 4-zone treatment — zones dict returned alongside treated elevation
+        result, zones = self._apply_four_zone_treatment(
             elevation_cleaned, crop_mask, boundary_elevations, config, rotation_deg)
-        
-        # Create zone visualization
-        zones = self._create_zones_for_visualization(crop_mask, config, rotation_deg)
         
         # Final cleanup
         treated_mask = crop_mask.copy()
@@ -85,7 +85,99 @@ class BoundaryTreatment:
         elevation_cleaned[nan_mask] = filled_values[nan_mask]
         
         return elevation_cleaned
-    
+
+    def _prepare_data_for_smoothing(self, data: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Return a copy of data with invalid/NaN regions filled with the median.
+
+        Args:
+            data: Input elevation array (may contain NaN outside the crop region).
+            mask: Boolean mask where True marks valid terrain pixels.
+
+        Returns:
+            A copy of data with all invalid pixels replaced by the median of the
+            valid pixels, suitable for smoothing without boundary artefacts.
+        """
+        working_data = data.copy()
+        invalid_mask = ~mask | np.isnan(working_data)
+        if np.any(invalid_mask):
+            valid_data = working_data[mask & ~np.isnan(working_data)]
+            if len(valid_data) > 0:
+                working_data[invalid_mask] = np.median(valid_data)
+        return working_data
+
+    def _apply_smoothing_kernel(self, data: np.ndarray, kernel_size: int,
+                                method: str) -> np.ndarray:
+        """Apply a single smoothing pass to *data* using the requested method.
+
+        Args:
+            data: 2D array to smooth (should have no NaN; call
+                ``_prepare_data_for_smoothing`` first).
+            kernel_size: Integer kernel/filter size (or sigma proxy for Gaussian).
+            method: One of ``'gaussian'``, ``'mean'``, or ``'median'``.
+
+        Returns:
+            Smoothed copy of data with the same shape.
+        """
+        if method == 'gaussian':
+            sigma = kernel_size / 6.0
+            return gaussian_filter(data, sigma=sigma, mode='nearest')
+        elif method == 'mean':
+            return uniform_filter(data.astype(float), size=kernel_size, mode='nearest')
+        elif method == 'median':
+            return median_filter(data, size=kernel_size, mode='nearest')
+        return data.copy()
+
+    def _flat_zone_strip_mask(self, direction: str, flow_x: np.ndarray,
+                              bounds: Dict, true_flat_thickness: float) -> np.ndarray:
+        """Return a boolean mask for the outermost flat strip of a boundary.
+
+        Args:
+            direction: ``'east'`` or ``'west'``.
+            flow_x: Flow-aligned x-coordinate array (same shape as the elevation grid).
+            bounds: Dict with ``'min_x'`` and ``'max_x'`` keys (flow-coordinate extents).
+            true_flat_thickness: Width of the flat strip in flow-coordinate metres.
+
+        Returns:
+            Boolean array selecting pixels in the flat strip for *direction*.
+        """
+        if direction == 'east':
+            return flow_x >= (bounds['max_x'] - true_flat_thickness)
+        elif direction == 'west':
+            return flow_x <= (bounds['min_x'] + true_flat_thickness)
+        return np.zeros_like(flow_x, dtype=bool)
+
+    def _boundary_zone_masks(self, direction: str, flow_x: np.ndarray,
+                             bounds: Dict, total_flat_thickness: float,
+                             true_flat_thickness: float) -> Tuple[np.ndarray, np.ndarray]:
+        """Return (blend_mask, flat_mask) for a directional boundary zone.
+
+        Args:
+            direction: ``'east'`` or ``'west'``.
+            flow_x: Flow-aligned x-coordinate array.
+            bounds: Dict with ``'min_x'`` and ``'max_x'`` keys.
+            total_flat_thickness: Combined blend + flat zone width in metres.
+            true_flat_thickness: Width of the innermost flat zone in metres.
+
+        Returns:
+            Tuple of boolean arrays ``(blend_mask, flat_mask)``.
+        """
+        if direction == 'east':
+            blend = (
+                (flow_x >= (bounds['max_x'] - total_flat_thickness)) &
+                (flow_x < (bounds['max_x'] - true_flat_thickness))
+            )
+            flat = flow_x >= (bounds['max_x'] - true_flat_thickness)
+        elif direction == 'west':
+            blend = (
+                (flow_x <= (bounds['min_x'] + total_flat_thickness)) &
+                (flow_x > (bounds['min_x'] + true_flat_thickness))
+            )
+            flat = flow_x <= (bounds['min_x'] + true_flat_thickness)
+        else:
+            blend = np.zeros_like(flow_x, dtype=bool)
+            flat = np.zeros_like(flow_x, dtype=bool)
+        return blend, flat
+
     def _calculate_boundary_heights_from_strips(self, elevation_data: np.ndarray, 
                                               crop_mask: np.ndarray, config: BoundaryConfig,
                                               rotation_deg: float) -> Dict[str, float]:
@@ -141,22 +233,17 @@ class BoundaryTreatment:
         boundary_elevations = {}
         
         for direction in config.enabled_boundaries:
-            if direction == 'east':
-                strip_mask = (flow_x >= (bounds['max_x'] - true_flat_thickness)) & crop_mask
-            elif direction == 'west':
-                strip_mask = (flow_x <= (bounds['min_x'] + true_flat_thickness)) & crop_mask
-            else:
-                logger.warning(f"Unsupported boundary direction '{direction}', skipping")
-                continue
-            
-            if np.any(strip_mask):
+            strip_mask = self._flat_zone_strip_mask(direction, flow_x, bounds, true_flat_thickness) & crop_mask
+            if strip_mask.any():
                 strip_elevations = elevation_data[strip_mask]
                 target_height = self._calculate_filtered_average(strip_elevations)
                 boundary_elevations[direction] = target_height
                 logger.debug(f"{direction.capitalize()} boundary height: {target_height:.2f}m")
-            else:
+            elif direction in ('east', 'west'):
                 logger.warning(f"No valid {direction} boundary pixels found, using 0.0m")
                 boundary_elevations[direction] = 0.0
+            else:
+                logger.warning(f"Unsupported boundary direction '{direction}', skipping")
         
         return boundary_elevations
     
@@ -174,9 +261,21 @@ class BoundaryTreatment:
     
     def _apply_four_zone_treatment(self, elevation_data: np.ndarray, crop_mask: np.ndarray,
                                    boundary_elevations: Dict[str, float], config: BoundaryConfig,
-                                   rotation_deg: float) -> np.ndarray:
-        """Apply 4-zone treatment based on boundary mode"""
-        
+                                   rotation_deg: float) -> Tuple[np.ndarray, Dict]:
+        """Apply 4-zone treatment based on boundary mode.
+
+        Args:
+            elevation_data: Cleaned elevation array.
+            crop_mask: Boolean mask of valid terrain pixels.
+            boundary_elevations: Target elevation per boundary direction.
+            config: BoundaryConfig instance.
+            rotation_deg: Wind direction in degrees from North.
+
+        Returns:
+            Tuple of ``(treated_elevation, zones)`` where *zones* is a dict with
+            keys ``'aoi'``, ``'transition'``, ``'blend'``, ``'flat'``, and
+            ``'center'``.
+        """
         if config.boundary_mode == 'directional':
             return self._apply_directional_four_zone_treatment(
                 elevation_data, crop_mask, boundary_elevations, config, rotation_deg)
@@ -186,8 +285,8 @@ class BoundaryTreatment:
     
     def _apply_radial_four_zone_treatment(self, elevation_data: np.ndarray, crop_mask: np.ndarray,
                                          boundary_elevations: Dict[str, float], 
-                                         config: BoundaryConfig) -> np.ndarray:
-        """Apply radial 4-zone treatment"""
+                                         config: BoundaryConfig) -> Tuple[np.ndarray, Dict]:
+        """Apply radial 4-zone treatment, returning treated elevation and zone masks."""
         
         result = elevation_data.copy()
         
@@ -202,17 +301,15 @@ class BoundaryTreatment:
         # Define zone boundaries
         aoi_radius = max_distance * config.aoi_fraction
         total_flat_thickness = max_distance * config.flat_boundary_thickness_fraction
-        blend_thickness = total_flat_thickness / 2
         true_flat_thickness = total_flat_thickness / 2
         
         # Zone boundaries from outside in
         true_flat_start_radius = max_distance - true_flat_thickness
         blend_start_radius = max_distance - total_flat_thickness
-        transition_end_radius = blend_start_radius
         
         # Create zone masks
         aoi_mask = (distances <= aoi_radius) & crop_mask
-        transition_mask = (distances > aoi_radius) & (distances <= transition_end_radius) & crop_mask
+        transition_mask = (distances > aoi_radius) & (distances <= blend_start_radius) & crop_mask
         blend_mask = (distances > blend_start_radius) & (distances < true_flat_start_radius) & crop_mask
         true_flat_mask = (distances >= true_flat_start_radius) & crop_mask
         
@@ -227,7 +324,7 @@ class BoundaryTreatment:
         if np.any(transition_mask):
             logger.debug(f"Applying progressive smoothing: {np.sum(transition_mask)} pixels...")
             transition_distances = distances[transition_mask]
-            distance_factors = (transition_distances - aoi_radius) / (transition_end_radius - aoi_radius)
+            distance_factors = (transition_distances - aoi_radius) / (blend_start_radius - aoi_radius)
             result = self._apply_progressive_smoothing_to_zone(
                 result, crop_mask, transition_mask, distance_factors, config)
         
@@ -238,12 +335,19 @@ class BoundaryTreatment:
             result = self._apply_blend_to_zone(
                 result, crop_mask, blend_mask, blend_factors, target_elevation, config)
         
-        return result
+        zones = {
+            'aoi': aoi_mask,
+            'transition': transition_mask,
+            'blend': blend_mask,
+            'flat': true_flat_mask,
+            'center': (center_row, center_col),
+        }
+        return result, zones
     
     def _apply_directional_four_zone_treatment(self, elevation_data: np.ndarray, crop_mask: np.ndarray,
                                               boundary_elevations: Dict[str, float], 
-                                              config: BoundaryConfig, rotation_deg: float) -> np.ndarray:
-        """Apply directional 4-zone treatment"""
+                                              config: BoundaryConfig, rotation_deg: float) -> Tuple[np.ndarray, Dict]:
+        """Apply directional 4-zone treatment, returning treated elevation and zone masks."""
         
         result = elevation_data.copy()
         
@@ -252,6 +356,8 @@ class BoundaryTreatment:
         flow_x = flow_coords['flow_x']
         flow_y = flow_coords['flow_y']
         bounds = flow_coords['bounds']
+        center_row = flow_coords['center_row']
+        center_col = flow_coords['center_col']
         
         # Calculate AOI (square)
         terrain_width = bounds['max_x'] - bounds['min_x']
@@ -267,7 +373,6 @@ class BoundaryTreatment:
         
         # Calculate zone thicknesses
         total_flat_thickness = terrain_width * config.flat_boundary_thickness_fraction
-        blend_thickness = total_flat_thickness / 2
         true_flat_thickness = total_flat_thickness / 2
         
         # Apply zones for each enabled boundary
@@ -275,16 +380,10 @@ class BoundaryTreatment:
         all_true_flat_mask = np.zeros_like(crop_mask, dtype=bool)
         
         for direction, target_elevation in boundary_elevations.items():
-            if direction == 'east':
-                blend_mask = ((flow_x >= (bounds['max_x'] - total_flat_thickness)) & 
-                            (flow_x < (bounds['max_x'] - true_flat_thickness))) & crop_mask & ~aoi_mask
-                true_flat_mask = (flow_x >= (bounds['max_x'] - true_flat_thickness)) & crop_mask & ~aoi_mask
-            elif direction == 'west':
-                blend_mask = ((flow_x <= (bounds['min_x'] + total_flat_thickness)) & 
-                            (flow_x > (bounds['min_x'] + true_flat_thickness))) & crop_mask & ~aoi_mask
-                true_flat_mask = (flow_x <= (bounds['min_x'] + true_flat_thickness)) & crop_mask & ~aoi_mask
-            else:
-                continue
+            blend_mask, true_flat_mask = self._boundary_zone_masks(
+                direction, flow_x, bounds, total_flat_thickness, true_flat_thickness)
+            blend_mask = blend_mask & crop_mask & ~aoi_mask
+            true_flat_mask = true_flat_mask & crop_mask & ~aoi_mask
             
             result[true_flat_mask] = target_elevation
             all_true_flat_mask |= true_flat_mask
@@ -311,7 +410,14 @@ class BoundaryTreatment:
                 result, crop_mask, all_blend_mask, flow_coords, 
                 total_flat_thickness, true_flat_thickness, boundary_elevations, config)
         
-        return result
+        zones = {
+            'aoi': aoi_mask,
+            'transition': transition_mask,
+            'blend': all_blend_mask,
+            'flat': all_true_flat_mask,
+            'center': (center_row, center_col),
+        }
+        return result, zones
     
     def _apply_progressive_smoothing_to_zone(self, result: np.ndarray, crop_mask: np.ndarray,
                                            zone_mask: np.ndarray, distance_factors: np.ndarray,
@@ -330,12 +436,11 @@ class BoundaryTreatment:
         zone_indices = np.where(zone_mask)
         zone_pixels = list(zip(zone_indices[0], zone_indices[1]))
         
-        chunk_size = 10000
-        num_chunks = (len(zone_pixels) + chunk_size - 1) // chunk_size
+        num_chunks = (len(zone_pixels) + _SMOOTHING_CHUNK_SIZE - 1) // _SMOOTHING_CHUNK_SIZE
         
         for chunk_idx in range(num_chunks):
-            start_idx = chunk_idx * chunk_size
-            end_idx = min(start_idx + chunk_size, len(zone_pixels))
+            start_idx = chunk_idx * _SMOOTHING_CHUNK_SIZE
+            end_idx = min(start_idx + _SMOOTHING_CHUNK_SIZE, len(zone_pixels))
             chunk_pixels = zone_pixels[start_idx:end_idx]
             
             for pixel_idx, (i, j) in enumerate(chunk_pixels):
@@ -427,29 +532,26 @@ class BoundaryTreatment:
         heavily_smoothed = self._apply_heavy_smoothing(result, crop_mask, max_kernel_size, config)
         
         for direction, target_elevation in boundary_elevations.items():
+            directional_blend_mask, _ = self._boundary_zone_masks(
+                direction, flow_x, bounds, total_flat_thickness, true_flat_thickness)
+            directional_blend_mask = directional_blend_mask & blend_mask
+
+            if not np.any(directional_blend_mask):
+                continue
+
             if direction == 'east':
-                directional_blend_mask = ((flow_x >= (bounds['max_x'] - total_flat_thickness)) & 
-                                        (flow_x < (bounds['max_x'] - true_flat_thickness))) & blend_mask
-                if np.any(directional_blend_mask):
-                    blend_distances = flow_x[directional_blend_mask]
-                    blend_factors = (blend_distances - (bounds['max_x'] - total_flat_thickness)) / blend_thickness
-                    blend_factors = np.clip(blend_factors, 0, 1)
-                    
-                    result[directional_blend_mask] = (
-                        heavily_smoothed[directional_blend_mask] * (1 - blend_factors) +
-                        target_elevation * blend_factors)
-                    
+                blend_distances = flow_x[directional_blend_mask]
+                blend_factors = (blend_distances - (bounds['max_x'] - total_flat_thickness)) / blend_thickness
             elif direction == 'west':
-                directional_blend_mask = ((flow_x <= (bounds['min_x'] + total_flat_thickness)) & 
-                                        (flow_x > (bounds['min_x'] + true_flat_thickness))) & blend_mask
-                if np.any(directional_blend_mask):
-                    blend_distances = flow_x[directional_blend_mask]
-                    blend_factors = 1.0 - ((blend_distances - (bounds['min_x'] + true_flat_thickness)) / blend_thickness)
-                    blend_factors = np.clip(blend_factors, 0, 1)
-                    
-                    result[directional_blend_mask] = (
-                        heavily_smoothed[directional_blend_mask] * (1 - blend_factors) +
-                        target_elevation * blend_factors)
+                blend_distances = flow_x[directional_blend_mask]
+                blend_factors = 1.0 - ((blend_distances - (bounds['min_x'] + true_flat_thickness)) / blend_thickness)
+            else:
+                continue
+
+            blend_factors = np.clip(blend_factors, 0, 1)
+            result[directional_blend_mask] = (
+                heavily_smoothed[directional_blend_mask] * (1 - blend_factors) +
+                target_elevation * blend_factors)
         
         return result
     
@@ -467,26 +569,8 @@ class BoundaryTreatment:
     def _apply_heavy_smoothing(self, data: np.ndarray, mask: np.ndarray, 
                              kernel_size: int, config: BoundaryConfig) -> np.ndarray:
         """Apply heavy smoothing to entire image"""
-        
-        # Prepare data
-        working_data = data.copy()
-        invalid_mask = ~mask | np.isnan(working_data)
-        if np.any(invalid_mask):
-            valid_data = working_data[mask & ~np.isnan(working_data)]
-            if len(valid_data) > 0:
-                fill_value = np.median(valid_data)
-                working_data[invalid_mask] = fill_value
-        
-        # Apply smoothing
-        if config.smoothing_method == 'gaussian':
-            sigma = kernel_size / 6.0
-            return gaussian_filter(working_data, sigma=sigma, mode='nearest')
-        elif config.smoothing_method == 'mean':
-            return uniform_filter(working_data.astype(float), size=kernel_size, mode='nearest')
-        elif config.smoothing_method == 'median':
-            return median_filter(working_data, size=kernel_size, mode='nearest')
-        else:
-            return working_data.copy()
+        working_data = self._prepare_data_for_smoothing(data, mask)
+        return self._apply_smoothing_kernel(working_data, kernel_size, config.smoothing_method)
     
     def _create_multiscale_pyramid(self, data: np.ndarray, mask: np.ndarray, 
                                   config: BoundaryConfig) -> List[np.ndarray]:
@@ -498,17 +582,9 @@ class BoundaryTreatment:
         logger.debug(f"Creating pyramid: kernel range {base_size:.1f} to {max_size:.1f}")
         
         num_scales = 7
+        working_data = self._prepare_data_for_smoothing(data, mask)
+        
         smoothed_images = []
-        
-        # Prepare data
-        working_data = data.copy()
-        invalid_mask = ~mask | np.isnan(working_data)
-        if np.any(invalid_mask):
-            valid_data = working_data[mask & ~np.isnan(working_data)]
-            if len(valid_data) > 0:
-                fill_value = np.median(valid_data)
-                working_data[invalid_mask] = fill_value
-        
         for scale_idx in range(num_scales):
             scale_factor = scale_idx / (num_scales - 1)  # 0 to 1
             
@@ -521,18 +597,9 @@ class BoundaryTreatment:
             kernel_size = max(int(kernel_size), 1)
             logger.debug(f"Scale {scale_idx+1}/{num_scales}: kernel size {kernel_size}")
             
-            # Apply smoothing
-            if config.smoothing_method == 'gaussian':
-                sigma = kernel_size / 6.0
-                smoothed = gaussian_filter(working_data, sigma=sigma, mode='nearest')
-            elif config.smoothing_method == 'mean':
-                smoothed = uniform_filter(working_data.astype(float), size=kernel_size, mode='nearest')
-            elif config.smoothing_method == 'median':
-                smoothed = median_filter(working_data, size=kernel_size, mode='nearest')
-            else:
-                smoothed = working_data.copy()
-            
-            smoothed_images.append(smoothed)
+            smoothed_images.append(
+                self._apply_smoothing_kernel(working_data, kernel_size, config.smoothing_method)
+            )
         
         return smoothed_images
     
@@ -606,84 +673,4 @@ class BoundaryTreatment:
                 'min_y': valid_flow_y.min(),
                 'max_y': valid_flow_y.max()
             }
-        }
-    
-    def _create_zones_for_visualization(self, crop_mask: np.ndarray, config: BoundaryConfig,
-                                      rotation_deg: float) -> Dict:
-        """Create zone masks for visualization"""
-        
-        rows, cols = np.where(crop_mask)
-        center_row, center_col = np.mean(rows), np.mean(cols)
-        
-        if config.boundary_mode == 'directional':
-            # Directional 4-zone visualization
-            flow_coords = self._get_flow_coordinates(crop_mask, rotation_deg)
-            flow_x = flow_coords['flow_x']
-            flow_y = flow_coords['flow_y']
-            bounds = flow_coords['bounds']
-            
-            terrain_width = bounds['max_x'] - bounds['min_x']
-            terrain_size = min(terrain_width, bounds['max_y'] - bounds['min_y'])
-            
-            aoi_half_size = terrain_size * config.aoi_fraction / 2
-            total_flat_thickness = terrain_width * config.flat_boundary_thickness_fraction
-            true_flat_thickness = total_flat_thickness / 2
-            
-            center_flow_x = (bounds['min_x'] + bounds['max_x']) / 2
-            center_flow_y = (bounds['min_y'] + bounds['max_y']) / 2
-            
-            # AOI mask
-            aoi_mask = ((np.abs(flow_x - center_flow_x) <= aoi_half_size) & 
-                       (np.abs(flow_y - center_flow_y) <= aoi_half_size)) & crop_mask
-            
-            # Boundary zone masks
-            blend_mask = np.zeros_like(crop_mask, dtype=bool)
-            flat_mask = np.zeros_like(crop_mask, dtype=bool)
-            
-            for direction in config.enabled_boundaries:
-                if direction == 'east':
-                    boundary_blend = ((flow_x >= (bounds['max_x'] - total_flat_thickness)) & 
-                                    (flow_x < (bounds['max_x'] - true_flat_thickness))) & crop_mask
-                    boundary_flat = (flow_x >= (bounds['max_x'] - true_flat_thickness)) & crop_mask
-                elif direction == 'west':
-                    boundary_blend = ((flow_x <= (bounds['min_x'] + total_flat_thickness)) & 
-                                    (flow_x > (bounds['min_x'] + true_flat_thickness))) & crop_mask
-                    boundary_flat = (flow_x <= (bounds['min_x'] + true_flat_thickness)) & crop_mask
-                else:
-                    continue
-                    
-                blend_mask |= boundary_blend
-                flat_mask |= boundary_flat
-            
-            # Remove AOI overlap
-            blend_mask = blend_mask & ~aoi_mask
-            flat_mask = flat_mask & ~aoi_mask
-            
-            # Transition zone is everything else
-            transition_mask = crop_mask & ~aoi_mask & ~blend_mask & ~flat_mask
-            
-        else:
-            # Radial 4-zone visualization
-            y_grid, x_grid = np.mgrid[0:crop_mask.shape[0], 0:crop_mask.shape[1]]
-            distances = np.sqrt((x_grid - center_col)**2 + (y_grid - center_row)**2)
-            max_distance = np.max(distances[crop_mask])
-            
-            aoi_radius = max_distance * config.aoi_fraction
-            total_flat_thickness = max_distance * config.flat_boundary_thickness_fraction
-            true_flat_thickness = total_flat_thickness / 2
-            
-            true_flat_start_radius = max_distance - true_flat_thickness
-            blend_start_radius = max_distance - total_flat_thickness
-            
-            aoi_mask = (distances <= aoi_radius) & crop_mask
-            transition_mask = (distances > aoi_radius) & (distances <= blend_start_radius) & crop_mask
-            blend_mask = (distances > blend_start_radius) & (distances < true_flat_start_radius) & crop_mask
-            flat_mask = (distances >= true_flat_start_radius) & crop_mask
-        
-        return {
-            'aoi': aoi_mask,
-            'transition': transition_mask,
-            'blend': blend_mask,
-            'flat': flat_mask,
-            'center': (center_row, center_col)
         }
