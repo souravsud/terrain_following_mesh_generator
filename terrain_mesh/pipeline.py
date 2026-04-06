@@ -264,22 +264,12 @@ class TerrainMeshPipeline:
 
         Creates a ``maps/`` folder inside *output_dir* and writes:
 
-        * ``terrain_map.npz`` – structured surface mesh elevation with arrays:
-
-          - ``elevation``, ``x``, ``y`` — vertex-grid arrays of shape ``(ny, nx)``,
-            used directly by the OpenFOAM blockMeshDict generation step.
-          - ``elevation_cc``, ``x_cc``, ``y_cc`` — cell-centre arrays of shape
-            ``(ny-1, nx-1)``, computed by averaging the four surrounding vertices.
-            These correspond to the values OpenFOAM reports at cell centres and
-            are provided for post-processing pipelines (Fix 3).
-
-        * ``roughness_map.npz`` – roughness length (z0) interpolated to the same
-          grid, with arrays:
-
-          - ``z0``, ``x``, ``y`` — vertex-grid arrays of shape ``(ny, nx)``.
-          - ``z0_cc``, ``x_cc``, ``y_cc`` — cell-centre arrays of shape
-            ``(ny-1, nx-1)``.
-
+        * ``terrain_map.npz`` – structured surface mesh elevation with arrays
+          ``elevation``, ``x``, ``y`` each of shape ``(ny, nx)``.  This file
+          is also the primary terrain surface used by the OpenFOAM generation
+          steps downstream (replaces the previously generated VTK file).
+        * ``roughness_map.npz`` – roughness length (z0) interpolated to the
+          same grid with arrays ``z0``, ``x``, ``y`` of shape ``(ny, nx)``.
           Only written when *roughness_data* is provided.
 
         Args:
@@ -311,24 +301,9 @@ class TerrainMeshPipeline:
         Y = points[:, :, 1]
         Z = points[:, :, 2]
 
-        # Fix 3: Pre-compute cell-centre coordinates and elevation by averaging the
-        # four surrounding vertex values.  Shape: (ny-1, nx-1).  These match the
-        # cell-centre values used by OpenFOAM and eliminate the need for any
-        # interpolation in post-processing pipelines.
-        Z_cc = 0.25 * (Z[:-1, :-1] + Z[:-1, 1:] + Z[1:, :-1] + Z[1:, 1:])
-        X_cc = 0.25 * (X[:-1, :-1] + X[:-1, 1:] + X[1:, :-1] + X[1:, 1:])
-        Y_cc = 0.25 * (Y[:-1, :-1] + Y[:-1, 1:] + Y[1:, :-1] + Y[1:, 1:])
-
-        # Terrain elevation map (no interpolation – direct read from grid).
-        # Vertex arrays (elevation, x, y) have shape (ny, nx) and are used by the
-        # blockMeshDict generator downstream.  Cell-centre arrays (*_cc) have shape
-        # (ny-1, nx-1) and are provided for post-processing pipelines.
+        # Terrain elevation map (no interpolation – direct read from grid)
         terrain_map_path = maps_dir / 'terrain_map.npz'
-        np.savez_compressed(
-            terrain_map_path,
-            elevation=Z, x=X, y=Y,
-            elevation_cc=Z_cc, x_cc=X_cc, y_cc=Y_cc,
-        )
+        np.savez_compressed(terrain_map_path, elevation=Z, x=X, y=Y)
         logger.debug(f"Terrain map saved to: {terrain_map_path}")
 
         roughness_map_path = None
@@ -359,16 +334,7 @@ class TerrainMeshPipeline:
             Z0_grid = z0_flat.reshape((ny, nx))
 
             roughness_map_path = maps_dir / 'roughness_map.npz'
-            # Cell-centre roughness: NaN propagates naturally when any vertex is NaN
-            Z0_cc = 0.25 * (
-                Z0_grid[:-1, :-1] + Z0_grid[:-1, 1:]
-                + Z0_grid[1:, :-1] + Z0_grid[1:, 1:]
-            )
-            np.savez_compressed(
-                roughness_map_path,
-                z0=Z0_grid, x=X, y=Y,
-                z0_cc=Z0_cc, x_cc=X_cc, y_cc=Y_cc,
-            )
+            np.savez_compressed(roughness_map_path, z0=Z0_grid, x=X, y=Y)
             logger.debug(f"Roughness map saved to: {roughness_map_path}")
 
         return terrain_map_path, roughness_map_path
