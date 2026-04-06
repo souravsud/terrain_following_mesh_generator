@@ -139,7 +139,7 @@ class StructuredGridGenerator:
         #    DEM area and receive NaN from the constant-padding sampler.  Trimming the
         #    same number of rows/cols from each side makes the output shape independent
         #    of which side has the larger rounding error.
-        nan_count = int(np.sum(np.isnan(Z)))
+        nan_count = np.sum(np.isnan(Z))
         logger.debug(f"NaN values after sampling: {nan_count}/{Z.size} ({100*nan_count/Z.size:.1f}%)")
 
         if nan_count > 0:
@@ -153,14 +153,14 @@ class StructuredGridGenerator:
                 )
 
             # Count how many edge rows/cols from each side contain NaN
-            rows_from_top = int(np.argmax(~nan_row_flags))
-            rows_from_bottom = int(np.argmax(~nan_row_flags[::-1]))
-            cols_from_left = int(np.argmax(~nan_col_flags))
-            cols_from_right = int(np.argmax(~nan_col_flags[::-1]))
+            nan_rows_top = int(np.argmax(~nan_row_flags))
+            nan_rows_bottom = int(np.argmax(~nan_row_flags[::-1]))
+            nan_cols_left = int(np.argmax(~nan_col_flags))
+            nan_cols_right = int(np.argmax(~nan_col_flags[::-1]))
 
             # Symmetric trim: use the larger of the two sides so both are trimmed equally
-            rows_trim = max(rows_from_top, rows_from_bottom)
-            cols_trim = max(cols_from_left, cols_from_right)
+            rows_trim = max(nan_rows_top, nan_rows_bottom)
+            cols_trim = max(nan_cols_left, nan_cols_right)
 
             r0, r1 = rows_trim, target_rows - rows_trim
             c0, c1 = cols_trim, target_cols - cols_trim
@@ -188,7 +188,7 @@ class StructuredGridGenerator:
                 )
 
             # Check for remaining interior NaN — a genuine DEM coverage gap
-            interior_nan = int(np.sum(np.isnan(Z)))
+            interior_nan = np.sum(np.isnan(Z))
             if interior_nan > 0:
                 raise ValueError(
                     f"{interior_nan} interior NaN value(s) remain after symmetric edge "
