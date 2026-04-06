@@ -90,8 +90,11 @@ class GridConfig:
     """Configuration for structured grid generation.
     
     Attributes:
-        nx: Number of cells in x-direction (minimum 2)
-        ny: Number of cells in y-direction (minimum 2)
+        nx: Number of grid vertices (sampling points) in the x-direction (minimum 2).
+            The mesh will have ``nx - 1`` cells per horizontal row.  To obtain a
+            target of *C* cells in the x-direction, set ``nx = C + 1``.
+        ny: Number of grid vertices (sampling points) in the y-direction (minimum 2).
+            The mesh will have ``ny - 1`` cells per horizontal column.
         x_grading: Optional multi-block grading for x-direction.
                   Format: [(length_fraction, cell_fraction, expansion_ratio), ...]
                   All fractions must sum to 1.0
