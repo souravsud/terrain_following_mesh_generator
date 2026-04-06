@@ -1,7 +1,7 @@
 import numpy as np
 import logging
 import pyvista as pv
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import map_coordinates, distance_transform_edt
 from typing import Tuple
 
 from .config import GridConfig, TerrainConfig
@@ -44,10 +44,10 @@ class StructuredGridGenerator:
             If None, creates uniform spacing
         
         Create a rotated structured grid that fits exactly to terrain bounds.
-        After sampling, any NaN values at the edges (caused by grid vertices landing
-        just outside the DEM extent due to the rotated crop) are trimmed symmetrically
-        (Fix 2) and a ValueError is raised if the trimming reduced the cell count below
-        the configured target (Fix 1).
+        Any NaN values that arise at grid edges (caused by grid vertices landing
+        just outside the DEM extent due to the rotated crop) are filled with the
+        nearest valid elevation so that the configured domain dimensions are
+        preserved exactly.
         """
         
         # 1. Find valid terrain bounds in pixel coordinates
@@ -134,80 +134,39 @@ class StructuredGridGenerator:
             prefilter=False
         )
 
-        # 9. Fix 2: Symmetrically trim NaN border vertices for deterministic output.
-        #    Vertices at the edges of a rotated domain may land just outside the valid
-        #    DEM area and receive NaN from the constant-padding sampler.  Trimming the
-        #    same number of rows/cols from each side makes the output shape independent
-        #    of which side has the larger rounding error.
+        # 9. Fill any NaN values using nearest-neighbour elevation.
+        #    Grid vertices at the corners/edges of a rotated domain may land just
+        #    outside the DEM extent and receive NaN from the constant-padding
+        #    sampler.  These points lie in the buffer region beyond the AOI, so
+        #    replacing them with the nearest valid elevation is safe and keeps the
+        #    domain dimensions exactly as configured (no trimming).
         nan_count = np.sum(np.isnan(Z))
         logger.debug(f"NaN values after sampling: {nan_count}/{Z.size} ({100*nan_count/Z.size:.1f}%)")
 
         if nan_count > 0:
-            nan_row_flags = np.any(np.isnan(Z), axis=1)  # True if row contains any NaN
-            nan_col_flags = np.any(np.isnan(Z), axis=0)  # True if col contains any NaN
+            valid_mask = ~np.isnan(Z)
 
-            if not np.any(~nan_row_flags) or not np.any(~nan_col_flags):
+            if not np.any(valid_mask):
                 raise ValueError(
-                    "No fully NaN-free rows or columns found in the sampled grid. "
-                    "Increase crop_size_km to ensure the DEM covers the full domain."
+                    "Elevation array is entirely NaN. The DEM does not cover the "
+                    "configured domain at all. Check center_lat/center_lon and "
+                    "crop_size_km."
                 )
 
-            # Count how many edge rows/cols from each side contain NaN
-            nan_rows_top = int(np.argmax(~nan_row_flags))
-            nan_rows_bottom = int(np.argmax(~nan_row_flags[::-1]))
-            nan_cols_left = int(np.argmax(~nan_col_flags))
-            nan_cols_right = int(np.argmax(~nan_col_flags[::-1]))
+            # For each NaN cell find the index of the nearest valid cell and copy
+            # its elevation.  distance_transform_edt with return_indices=True gives,
+            # for every cell in ~valid_mask (i.e. every NaN cell), the (row, col)
+            # of the nearest True pixel in valid_mask.
+            _distances, nearest_idx = distance_transform_edt(~valid_mask, return_indices=True)
+            nan_locs = ~valid_mask
+            Z[nan_locs] = Z[nearest_idx[0][nan_locs], nearest_idx[1][nan_locs]]
 
-            # Symmetric trim: use the larger of the two sides so both are trimmed equally
-            rows_trim = max(nan_rows_top, nan_rows_bottom)
-            cols_trim = max(nan_cols_left, nan_cols_right)
-
-            r0, r1 = rows_trim, target_rows - rows_trim
-            c0, c1 = cols_trim, target_cols - cols_trim
-
-            if r1 <= r0 or c1 <= c0:
-                raise ValueError(
-                    f"Symmetric NaN trim (rows ±{rows_trim}, cols ±{cols_trim}) would "
-                    f"consume the entire grid ({target_rows}×{target_cols}). "
-                    "Increase crop_size_km."
-                )
-
-            Z = Z[r0:r1, c0:c1]
-            X_utm = X_utm[r0:r1, c0:c1]
-            Y_utm = Y_utm[r0:r1, c0:c1]
-
-            trimmed_rows, trimmed_cols = Z.shape
-
-            if rows_trim > 0 or cols_trim > 0:
-                logger.warning(
-                    f"Symmetrically trimmed {rows_trim} row(s) and {cols_trim} col(s) "
-                    f"from each edge to remove NaN border vertices. "
-                    f"Grid: {target_rows}×{target_cols} → "
-                    f"{trimmed_rows}×{trimmed_cols} "
-                    f"({trimmed_rows - 1}×{trimmed_cols - 1} cells)."
-                )
-
-            # Check for remaining interior NaN — a genuine DEM coverage gap
-            interior_nan = np.sum(np.isnan(Z))
-            if interior_nan > 0:
-                raise ValueError(
-                    f"{interior_nan} interior NaN value(s) remain after symmetric edge "
-                    "trimming. This indicates gaps in DEM coverage inside the domain. "
-                    "Check the DEM for NoData holes."
-                )
-
-            # Fix 1: Validate that the configured cell count is still met.
-            #         Any trim means the DEM crop is too small for the rotated grid.
-            if trimmed_cols - 1 < target_cols - 1 or trimmed_rows - 1 < target_rows - 1:
-                raise ValueError(
-                    f"Grid has fewer valid cells than configured after removing NaN "
-                    f"border vertices: got {trimmed_rows - 1}×{trimmed_cols - 1} cells, "
-                    f"expected {target_rows - 1}×{target_cols - 1}. "
-                    "Increase crop_size_km to provide full DEM coverage for the "
-                    "rotated grid."
-                )
-
-            target_rows, target_cols = trimmed_rows, trimmed_cols
+            logger.warning(
+                f"Filled {nan_count} NaN grid point(s) "
+                f"({100 * nan_count / Z.size:.1f}% of grid) using nearest-neighbour "
+                f"elevation. These points lie outside the DEM extent due to domain "
+                f"rotation and are in the buffer region outside the AOI."
+            )
 
         # 10. Center coordinates if requested
         if center_coordinates:

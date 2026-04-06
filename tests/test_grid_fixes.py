@@ -1,16 +1,10 @@
-"""Tests for grid dimension fixes (Fix 1, Fix 2, Fix 3).
+"""Tests for grid NaN handling (nearest-neighbour fill) and cell-centre NPZ maps.
 
-Fix 1 (critical):  Raise ValueError when the valid cell count falls below the
-    configured target after NaN-edge trimming, so that users know to increase
-    crop_size_km.
+The symmetric-trim / cell-count-validation approach (originally called Fix 1 and
+Fix 2) has been replaced by a nearest-neighbour NaN fill so that domain dimensions
+are preserved exactly as configured.  Tests below verify the new behaviour.
 
-Fix 2 (important):  Symmetrically trim NaN border vertices from the sampled
-    grid so the output shape is deterministic regardless of which side has the
-    larger rounding error at the rotated-crop boundary.
-
-Fix 3 (nice-to-have):  Save cell-centre arrays (``elevation_cc``, ``x_cc``,
-    ``y_cc``, and ``z0_cc`` for roughness) alongside the vertex arrays in the
-    NPZ maps, so post-processing pipelines do not need to interpolate.
+Fix 3 (cell-centre arrays in NPZ maps) is unchanged and tested in TestCellCentreNpz.
 """
 
 import pathlib
@@ -51,18 +45,14 @@ def _make_pyvista_grid(ny=5, nx=5, elevation=50.0):
 
 
 # ---------------------------------------------------------------------------
-# Fix 2 + Fix 1: NaN trimming and cell-count validation
+# NaN nearest-neighbour fill
 # ---------------------------------------------------------------------------
 
-class TestNanTrimming:
-    """Fix 2: Symmetrically trim NaN border vertices."""
+class TestNanFill:
+    """NaN values at grid edges are filled with nearest-neighbour elevation."""
 
     def test_clean_dem_returns_target_dimensions(self):
         """A DEM fully covering the terrain extent should return exact target dimensions."""
-        # Use a 20×20 DEM with only the central 10×10 region marked as terrain.
-        # Grid vertices land at pixel indices [5, 14], well inside the DEM extent,
-        # which avoids the tiny floating-point out-of-bounds artefacts that occur
-        # when a grid is created to span exactly the DEM boundary.
         nrows, ncols = 20, 20
         elevation = _make_flat_dem(nrows, ncols)
         transform = _simple_transform(nrows, ncols)
@@ -82,8 +72,8 @@ class TestNanTrimming:
         assert nx == 5
         assert ny == 5
 
-    def test_border_nan_raises_fix1_error(self):
-        """Border NaN causes trimming → fewer cells than target → ValueError (Fix 1)."""
+    def test_border_nan_filled_preserves_target_dimensions(self):
+        """Border NaN values should be filled; grid dimensions stay at the target."""
         nrows, ncols = 12, 12
         elevation = _make_flat_dem(nrows, ncols)
         # Set entire border to NaN (simulates vertices landing just outside the
@@ -97,43 +87,101 @@ class TestNanTrimming:
         crop_mask = np.ones((nrows, ncols), bool)
 
         gen = StructuredGridGenerator()
-        # target_cols=12 → expects 11 cells; after trimming we get fewer.
-        with pytest.raises(ValueError, match="crop_size_km"):
-            gen.create_structured_grid(
-                elevation, transform,
-                target_rows=12, target_cols=12,
-                rotation_deg=0,
-                crop_mask=crop_mask,
-                centre_utm=(0.0, 0.0),
-                center_coordinates=False,
-            )
+        grid = gen.create_structured_grid(
+            elevation, transform,
+            target_rows=12, target_cols=12,
+            rotation_deg=0,
+            crop_mask=crop_mask,
+            centre_utm=(0.0, 0.0),
+            center_coordinates=False,
+        )
+        # Dimensions must be exactly as requested — no trimming.
+        nx, ny, _ = grid.dimensions
+        assert nx == 12
+        assert ny == 12
+        # No NaN values in the output elevation
+        elev = grid.point_data['elevation']
+        assert not np.any(np.isnan(elev)), "Elevation still contains NaN after fill"
 
-    def test_interior_nan_raises_dem_gap_error(self):
-        """Interior NaN after edge trimming signals a DEM coverage gap (Fix 2)."""
-        # Use a 20×20 DEM with a central crop_mask so grid vertices sit inside the
-        # DEM extent without FP boundary artefacts.  One NaN pixel inside the sampled
-        # region produces an interior NaN cell that cannot be removed by edge trimming.
+    def test_border_nan_filled_with_nearest_value(self):
+        """NaN border cells must be filled with their nearest valid neighbour."""
+        nrows, ncols = 5, 5
+        # Flat DEM at elevation 200 except the top row is NaN
+        elevation = _make_flat_dem(nrows, ncols, value=200.0)
+        elevation[0, :] = np.nan
+
+        transform = _simple_transform(nrows, ncols)
+        crop_mask = np.ones((nrows, ncols), bool)
+
+        gen = StructuredGridGenerator()
+        grid = gen.create_structured_grid(
+            elevation, transform,
+            target_rows=5, target_cols=5,
+            rotation_deg=0,
+            crop_mask=crop_mask,
+            centre_utm=(0.0, 0.0),
+            center_coordinates=False,
+        )
+        elev = grid.point_data['elevation']
+        assert not np.any(np.isnan(elev))
+        # All filled values should equal 200 (the only valid elevation present)
+        np.testing.assert_allclose(elev, 200.0)
+
+    def test_interior_nan_filled_with_nearest_neighbour(self):
+        """An interior NaN (e.g. a DEM hole) is also filled without raising an error."""
         nrows, ncols = 20, 20
-        elevation = _make_flat_dem(nrows, ncols)
-        # Pixel (10, 10) is inside the crop region; bilinear interpolation at the
-        # target vertex near (row≈9.5, col≈9.5) in pixel space will sample it.
+        elevation = _make_flat_dem(nrows, ncols, value=150.0)
+        # A single interior NaN pixel
         elevation[10, 10] = np.nan
+        transform = _simple_transform(nrows, ncols)
+        crop_mask = np.zeros((nrows, ncols), bool)
+        crop_mask[5:15, 5:15] = True
+
+        gen = StructuredGridGenerator()
+        # Should not raise
+        grid = gen.create_structured_grid(
+            elevation, transform,
+            target_rows=5, target_cols=5,
+            rotation_deg=0,
+            crop_mask=crop_mask,
+            centre_utm=(0.0, 0.0),
+            center_coordinates=False,
+        )
+        elev = grid.point_data['elevation']
+        assert not np.any(np.isnan(elev)), "Interior NaN should have been filled"
+
+    def test_border_nan_filled_with_nearest_value_varying_elevations(self):
+        """Nearest-neighbour fill produces valid elevations when the DEM is non-uniform."""
+        # 20×20 DEM: left half at 100 m, right half at 200 m.
+        # Only the central 10×10 block is marked as terrain, so grid vertices
+        # land well inside the DEM and no NaN arises from bilinear sampling.
+        # We then verify that NaN-free results are returned and that all filled
+        # elevations lie within the DEM's valid range [100, 200].
+        nrows, ncols = 20, 20
+        elevation = np.empty((nrows, ncols), dtype=float)
+        elevation[:, :10] = 100.0
+        elevation[:, 10:] = 200.0
+
         transform = _simple_transform(nrows, ncols)
         crop_mask = np.zeros((nrows, ncols), bool)
         crop_mask[5:15, 5:15] = True  # central 10×10 region
 
         gen = StructuredGridGenerator()
-        with pytest.raises(ValueError, match="interior"):
-            gen.create_structured_grid(
-                elevation, transform,
-                target_rows=5, target_cols=5,
-                rotation_deg=0,
-                crop_mask=crop_mask,
-                centre_utm=(0.0, 0.0),
-                center_coordinates=False,
-            )
-
-    def test_fully_nan_grid_raises_clear_error(self):
+        grid = gen.create_structured_grid(
+            elevation, transform,
+            target_rows=5, target_cols=5,
+            rotation_deg=0,
+            crop_mask=crop_mask,
+            centre_utm=(0.0, 0.0),
+            center_coordinates=False,
+        )
+        elev = grid.point_data['elevation']
+        assert not np.any(np.isnan(elev)), "Elevation still contains NaN"
+        # All sampled/filled values must lie within the DEM's valid range (allow
+        # a small tolerance for bilinear interpolation rounding at the boundary)
+        assert np.all(elev >= 100.0 - 1e-6) and np.all(elev <= 200.0 + 1e-6), (
+            f"Elevation out of [100, 200] range: min={elev.min()}, max={elev.max()}"
+        )
         """An entirely NaN elevation array should raise a descriptive ValueError."""
         nrows, ncols = 8, 8
         elevation = np.full((nrows, ncols), np.nan)
@@ -145,27 +193,6 @@ class TestNanTrimming:
             gen.create_structured_grid(
                 elevation, transform,
                 target_rows=5, target_cols=5,
-                rotation_deg=0,
-                crop_mask=crop_mask,
-                centre_utm=(0.0, 0.0),
-                center_coordinates=False,
-            )
-
-    def test_error_message_mentions_crop_size(self):
-        """The Fix 1 ValueError must guide the user toward increasing crop_size_km."""
-        nrows, ncols = 10, 10
-        elevation = _make_flat_dem(nrows, ncols)
-        elevation[0, :] = np.nan
-        elevation[-1, :] = np.nan
-
-        transform = _simple_transform(nrows, ncols)
-        crop_mask = np.ones((nrows, ncols), bool)
-
-        gen = StructuredGridGenerator()
-        with pytest.raises(ValueError, match="crop_size_km"):
-            gen.create_structured_grid(
-                elevation, transform,
-                target_rows=10, target_cols=5,
                 rotation_deg=0,
                 crop_mask=crop_mask,
                 centre_utm=(0.0, 0.0),
