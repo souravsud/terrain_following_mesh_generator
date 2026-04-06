@@ -25,9 +25,11 @@ class StructuredGridGenerator:
         transform : Affine
             Geospatial transform for pixel to UTM conversion
         target_rows : int
-            Number of rows in output grid
+            Number of grid vertex rows in the output grid (``ny`` from GridConfig).
+            The mesh will contain ``target_rows - 1`` cells in the y-direction.
         target_cols : int
-            Number of columns in output grid
+            Number of grid vertex columns in the output grid (``nx`` from GridConfig).
+            The mesh will contain ``target_cols - 1`` cells in the x-direction.
         rotation_deg : float
             Meteorological wind direction (0°=N, 90°=E, 180°=S, 270°=W)
         crop_mask : np.ndarray
@@ -42,11 +44,10 @@ class StructuredGridGenerator:
             If None, creates uniform spacing
         
         Create a rotated structured grid that fits exactly to terrain bounds.
-        
-        This approach:
-        1. Finds actual terrain bounds from crop_mask
-        2. Creates grid with specified divisions to fit those bounds exactly
-        3. No cropping needed - all points are valid
+        After sampling, any NaN values at the edges (caused by grid vertices landing
+        just outside the DEM extent due to the rotated crop) are trimmed symmetrically
+        (Fix 2) and a ValueError is raised if the trimming reduced the cell count below
+        the configured target (Fix 1).
         """
         
         # 1. Find valid terrain bounds in pixel coordinates
@@ -123,7 +124,7 @@ class StructuredGridGenerator:
         row_coords = (Y_utm - transform.f) / transform.e
         
         # 8. Sample elevation data at grid points
-        
+
         Z = map_coordinates(
             elevation_data,
             [row_coords, col_coords],
@@ -132,15 +133,82 @@ class StructuredGridGenerator:
             cval=np.nan,
             prefilter=False
         )
-        
-        # 9. Check for any NaN values (should be minimal since grid fits terrain)
+
+        # 9. Fix 2: Symmetrically trim NaN border vertices for deterministic output.
+        #    Vertices at the edges of a rotated domain may land just outside the valid
+        #    DEM area and receive NaN from the constant-padding sampler.  Trimming the
+        #    same number of rows/cols from each side makes the output shape independent
+        #    of which side has the larger rounding error.
         nan_count = np.sum(np.isnan(Z))
-        total_points = Z.size
-        logger.debug(f"NaN values: {nan_count}/{total_points} ({100*nan_count/total_points:.1f}%)")
-        
+        logger.debug(f"NaN values after sampling: {nan_count}/{Z.size} ({100*nan_count/Z.size:.1f}%)")
+
         if nan_count > 0:
-            logger.warning(f"{nan_count} grid points fall outside terrain bounds — consider adjusting domain")
-        
+            nan_row_flags = np.any(np.isnan(Z), axis=1)  # True if row contains any NaN
+            nan_col_flags = np.any(np.isnan(Z), axis=0)  # True if col contains any NaN
+
+            if not np.any(~nan_row_flags) or not np.any(~nan_col_flags):
+                raise ValueError(
+                    "No fully NaN-free rows or columns found in the sampled grid. "
+                    "Increase crop_size_km to ensure the DEM covers the full domain."
+                )
+
+            # Count how many edge rows/cols from each side contain NaN
+            nan_rows_top = int(np.argmax(~nan_row_flags))
+            nan_rows_bottom = int(np.argmax(~nan_row_flags[::-1]))
+            nan_cols_left = int(np.argmax(~nan_col_flags))
+            nan_cols_right = int(np.argmax(~nan_col_flags[::-1]))
+
+            # Symmetric trim: use the larger of the two sides so both are trimmed equally
+            rows_trim = max(nan_rows_top, nan_rows_bottom)
+            cols_trim = max(nan_cols_left, nan_cols_right)
+
+            r0, r1 = rows_trim, target_rows - rows_trim
+            c0, c1 = cols_trim, target_cols - cols_trim
+
+            if r1 <= r0 or c1 <= c0:
+                raise ValueError(
+                    f"Symmetric NaN trim (rows ±{rows_trim}, cols ±{cols_trim}) would "
+                    f"consume the entire grid ({target_rows}×{target_cols}). "
+                    "Increase crop_size_km."
+                )
+
+            Z = Z[r0:r1, c0:c1]
+            X_utm = X_utm[r0:r1, c0:c1]
+            Y_utm = Y_utm[r0:r1, c0:c1]
+
+            trimmed_rows, trimmed_cols = Z.shape
+
+            if rows_trim > 0 or cols_trim > 0:
+                logger.warning(
+                    f"Symmetrically trimmed {rows_trim} row(s) and {cols_trim} col(s) "
+                    f"from each edge to remove NaN border vertices. "
+                    f"Grid: {target_rows}×{target_cols} → "
+                    f"{trimmed_rows}×{trimmed_cols} "
+                    f"({trimmed_rows - 1}×{trimmed_cols - 1} cells)."
+                )
+
+            # Check for remaining interior NaN — a genuine DEM coverage gap
+            interior_nan = np.sum(np.isnan(Z))
+            if interior_nan > 0:
+                raise ValueError(
+                    f"{interior_nan} interior NaN value(s) remain after symmetric edge "
+                    "trimming. This indicates gaps in DEM coverage inside the domain. "
+                    "Check the DEM for NoData holes."
+                )
+
+            # Fix 1: Validate that the configured cell count is still met.
+            #         Any trim means the DEM crop is too small for the rotated grid.
+            if trimmed_cols - 1 < target_cols - 1 or trimmed_rows - 1 < target_rows - 1:
+                raise ValueError(
+                    f"Grid has fewer valid cells than configured after removing NaN "
+                    f"border vertices: got {trimmed_rows - 1}×{trimmed_cols - 1} cells, "
+                    f"expected {target_rows - 1}×{target_cols - 1}. "
+                    "Increase crop_size_km to provide full DEM coverage for the "
+                    "rotated grid."
+                )
+
+            target_rows, target_cols = trimmed_rows, trimmed_cols
+
         # 10. Center coordinates if requested
         if center_coordinates:
             X_final = X_utm - terrain_center_x
@@ -149,17 +217,17 @@ class StructuredGridGenerator:
         else:
             X_final = X_utm
             Y_final = Y_utm
-        
-        logger.debug(f"Final grid: {target_cols} x {target_rows}")
-        
+
+        logger.debug(f"Final grid: {target_cols} x {target_rows} ({target_cols - 1} x {target_rows - 1} cells)")
+
         # 11. Create PyVista structured grid
         points = np.column_stack((X_final.ravel(), Y_final.ravel(), Z.ravel()))
-        
+
         grid = pv.StructuredGrid()
         grid.points = points
         grid.dimensions = (target_cols, target_rows, 1)
         grid.point_data['elevation'] = Z.ravel()
-        
+
         return grid
     
     def create_grid(self, elevation_data: np.ndarray, transform, grid_config: GridConfig,
