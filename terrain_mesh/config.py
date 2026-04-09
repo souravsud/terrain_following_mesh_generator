@@ -156,6 +156,12 @@ class MeshConfig:
     patch_types: Optional[Dict[str, str]] = None
     extract_inlet_face_info: bool = True
 
+    # Default surface roughness length used when no roughness map is supplied.
+    # When ``rmap_path`` is not passed to the pipeline, a constant roughness map
+    # equal to this value is synthesised and saved alongside the terrain map so
+    # that ML training datasets always contain a paired roughness map.
+    default_z0: float = 0.1
+
     def __post_init__(self):
         if self.patch_types is None:
             self.patch_types = {
