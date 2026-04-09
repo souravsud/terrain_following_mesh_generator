@@ -125,8 +125,8 @@ class TerrainMeshPipeline:
             roughness_data, roughness_transform = \
                 self.processor.extract_rotated_rmap(rmap_path, terrain_config)
         
-        if mesh_config.adjust_ceiling_for_terrain and min_elevation != 0.0:
-            logger.info("[1/6] Adjusting domain ceiling for terrain altitude (AGL mode)...")
+        if mesh_config.adjust_ceiling_for_terrain and min_elevation >= 0.0:
+            logger.info("[1/6] Adjusting domain ceiling for terrain altitude...")
             mesh_config.domain_height = mesh_config.domain_height + min_elevation
         
         # Step 2: Apply boundary treatment
