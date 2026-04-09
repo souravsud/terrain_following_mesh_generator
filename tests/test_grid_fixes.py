@@ -357,7 +357,7 @@ class TestSaveMapsNanFix:
         ny, nx = 5, 5
         grid = _make_pyvista_grid(ny=ny, nx=nx, elevation=50.0)
 
-        # Roughness raster covers only the central 20 % of the grid (x,y in
+        # Roughness raster covers only the central 20% of the grid (x,y in
         # [40,60]), so corner/edge vertices are strictly outside its bounds.
         roughness_data = np.full((3, 3), 0.5)
         roughness_transform = from_bounds(40, 40, 60, 60, 3, 3)

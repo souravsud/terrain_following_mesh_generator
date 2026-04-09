@@ -452,8 +452,10 @@ class TerrainMeshPipeline:
         # Add a 1 % buffer so every grid vertex is strictly inside coverage.
         buf_x = max((x_max - x_min) * 0.01, 1.0)
         buf_y = max((y_max - y_min) * 0.01, 1.0)
-        x_min -= buf_x;  x_max += buf_x
-        y_min -= buf_y;  y_max += buf_y
+        x_min -= buf_x
+        x_max += buf_x
+        y_min -= buf_y
+        y_max += buf_y
 
         # build_roughness_interpolator uses pixel-origin coordinates:
         #   x_coords = np.arange(ncols) * x_res + transform.c   (origins)
