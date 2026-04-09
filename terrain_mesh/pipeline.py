@@ -119,6 +119,7 @@ class TerrainMeshPipeline:
             self.processor.extract_rotated_terrain(dem_path, terrain_config)
         
         roughness_data, roughness_transform = None, None
+        roughness_is_constant = False
         if rmap_path:
             logger.info("[1/6] Extracting roughness map...")
             roughness_data, roughness_transform = \
@@ -148,6 +149,22 @@ class TerrainMeshPipeline:
         
         # Step 4: Save ML-ready terrain and roughness maps to maps/ folder
         logger.info("[4/6] Saving terrain maps...")
+
+        # When no roughness map was supplied, synthesise a constant raster so that
+        # the ML training dataset always contains a paired roughness_map.npz file.
+        if roughness_data is None:
+            roughness_is_constant = True
+            logger.info(
+                f"[4/6] No roughness map provided — synthesising constant "
+                f"roughness map (z0={mesh_config.default_z0:.4f} m)..."
+            )
+            roughness_data, roughness_transform = self._make_constant_roughness(
+                grid=grid,
+                center_coordinates=terrain_config.center_coordinates,
+                centre_utm=centre_utm,
+                z0_value=mesh_config.default_z0,
+            )
+
         terrain_map_path, roughness_map_path = self._save_maps(
             grid=grid,
             roughness_data=roughness_data,
@@ -160,18 +177,17 @@ class TerrainMeshPipeline:
         # Step 5: Generate OpenFOAM outputs
         logger.info("[5/6] Generating OpenFOAM files...")
         
-        # Generate z0 field if roughness map provided
-        z0_stats = None
-        if roughness_data is not None:
-            z0_file = output_dir / '0' / 'include' / 'z0Values'
-            z0_stats = self.blockmesh_generator.generate_z0_field(
-                terrain_map=str(terrain_map_path),
-                roughness_data=roughness_data,
-                roughness_transform=roughness_transform,
-                output_file=str(z0_file),
-                default_z0=0.1
-            )
-            logger.info(f"z0 field saved with {z0_stats['n_faces']} faces")
+        # Generate z0 field (roughness_data is always set at this point, either
+        # from a real rmap_path or from the synthesised constant raster above).
+        z0_file = output_dir / '0' / 'include' / 'z0Values'
+        z0_stats = self.blockmesh_generator.generate_z0_field(
+            terrain_map=str(terrain_map_path),
+            roughness_data=roughness_data,
+            roughness_transform=roughness_transform,
+            output_file=str(z0_file),
+            default_z0=mesh_config.default_z0
+        )
+        logger.info(f"z0 field saved with {z0_stats['n_faces']} faces")
         
         # Generate blockMeshDict if requested
         blockmesh_path = None
@@ -202,15 +218,14 @@ class TerrainMeshPipeline:
                                                     crop_mask=crop_mask
                                                 )
             
-            # Roughness plots if available
-            if roughness_data is not None and z0_stats is not None:
-                self.visualizer.create_roughness_plots(
-                    roughness_data, 
-                    roughness_transform, 
-                    z0_stats, 
-                    output_dir, 
-                    str(terrain_map_path)
-                )
+            # Roughness plots (always available — constant raster is used when no rmap_path)
+            self.visualizer.create_roughness_plots(
+                roughness_data, 
+                roughness_transform, 
+                z0_stats, 
+                output_dir, 
+                str(terrain_map_path)
+            )
             
             logger.debug("Visualization plots created")
         
@@ -253,7 +268,8 @@ class TerrainMeshPipeline:
             'roughness_map_path': str(roughness_map_path) if roughness_map_path else None,
             'blockmesh_path': str(blockmesh_path) if blockmesh_path else None,
             'metadata_path': str(metadata_path) if metadata_path else None,
-            'has_roughness': roughness_data is not None,
+            'has_roughness': True,  # roughness_map.npz is always written
+            'roughness_is_constant': roughness_is_constant,
         }
         
         return results
@@ -351,9 +367,13 @@ class TerrainMeshPipeline:
             query_points = np.column_stack((Y_utm.ravel(), X_utm.ravel()))
             z0_flat = interpolator(query_points)
 
-            # Apply minimum roughness only where elevation is defined
+            # Apply minimum roughness only where elevation is defined.
+            # np.fmax is used instead of np.maximum so that any NaN returned by
+            # the interpolator for points that fall outside the roughness raster
+            # bounding box is treated as 0 (i.e. resolved to 0.0002) rather than
+            # propagating NaN into the saved map.
             valid_elev = ~np.isnan(Z.ravel())
-            z0_flat[valid_elev] = np.maximum(z0_flat[valid_elev], 0.0002)
+            z0_flat[valid_elev] = np.fmax(z0_flat[valid_elev], 0.0002)
             z0_flat[~valid_elev] = np.nan  # preserve NaN outside terrain
 
             Z0_grid = z0_flat.reshape((ny, nx))
@@ -372,3 +392,88 @@ class TerrainMeshPipeline:
             logger.debug(f"Roughness map saved to: {roughness_map_path}")
 
         return terrain_map_path, roughness_map_path
+
+    def _make_constant_roughness(
+        self,
+        grid,
+        center_coordinates: bool,
+        centre_utm,
+        z0_value: float,
+    ):
+        """Synthesise a constant roughness raster that covers the structured grid extent.
+
+        When no roughness map file is available (``rmap_path`` is ``None``), this
+        method creates a 3×3 raster filled with *z0_value* whose pixel-origin
+        coordinates (used by :func:`~terrain_mesh.utils.build_roughness_interpolator`)
+        span the full terrain grid extent plus a small buffer.  This ensures every
+        grid query point falls strictly inside the interpolator's coverage and
+        receives the requested constant value rather than the out-of-bounds fallback.
+
+        The raster is functionally identical to any real raster from the perspective
+        of :func:`~terrain_mesh.utils.build_roughness_interpolator` and allows the
+        full pipeline (NPZ save, z0Values, inletFaceInfo, visualisation) to produce
+        consistent output for ML training datasets even when only a single constant
+        roughness value is known.
+
+        Args:
+            grid: PyVista StructuredGrid produced by :class:`StructuredGridGenerator`.
+            center_coordinates: Whether grid X/Y values are centred at
+                *centre_utm* rather than being absolute UTM coordinates.
+            centre_utm: ``(x, y)`` UTM coordinates of the terrain centre (used
+                when *center_coordinates* is ``True``).
+            z0_value: Constant roughness length (m) to fill the raster with.
+                Values below 0.0002 are clipped to 0.0002 (minimum physically
+                meaningful roughness, corresponding to open water).
+
+        Returns:
+            Tuple ``(roughness_data, roughness_transform)`` ready to be consumed
+            by :meth:`_save_maps` and :meth:`~terrain_mesh.blockmesh_generator.BlockMeshGenerator.generate_z0_field`.
+        """
+        from rasterio.transform import Affine as _Affine
+
+        z0_value = max(float(z0_value), 0.0002)
+
+        nx_grid, ny_grid, _ = grid.dimensions
+        points = grid.points.reshape((ny_grid, nx_grid, 3))
+        X = points[:, :, 0]
+        Y = points[:, :, 1]
+
+        # Convert centred coordinates back to absolute UTM if required
+        if center_coordinates:
+            X_utm = X + centre_utm[0]
+            Y_utm = Y + centre_utm[1]
+        else:
+            X_utm = X
+            Y_utm = Y
+
+        x_min, x_max = float(X_utm.min()), float(X_utm.max())
+        y_min, y_max = float(Y_utm.min()), float(Y_utm.max())
+
+        # Add a 1 % buffer so every grid vertex is strictly inside coverage.
+        buf_x = max((x_max - x_min) * 0.01, 1.0)
+        buf_y = max((y_max - y_min) * 0.01, 1.0)
+        x_min -= buf_x
+        x_max += buf_x
+        y_min -= buf_y
+        y_max += buf_y
+
+        # build_roughness_interpolator uses pixel-origin coordinates:
+        #   x_coords = np.arange(ncols) * x_res + transform.c   (origins)
+        #   y_coords = np.arange(nrows) * (-y_res) + transform.f (descending origins)
+        # For a 3×3 raster the last origin is at index 2, covering only 2/3 of
+        # the domain when from_bounds is used.  Instead, set the pixel spacing
+        # so that index-0 and index-2 origins land exactly at x_min and x_max:
+        #   x_res = (x_max - x_min) / (ncols - 1)   →   x_coords = [x_min, mid, x_max]
+        nrows, ncols = 3, 3
+        x_res = (x_max - x_min) / (ncols - 1)
+        y_res = (y_max - y_min) / (nrows - 1)
+
+        roughness_data = np.full((nrows, ncols), z0_value, dtype=np.float32)
+        # Affine(a, b, c, d, e, f):  x_pixel=a, y_pixel=e (<0 north-up), origin=(c, f)
+        roughness_transform = _Affine(x_res, 0.0, x_min, 0.0, -y_res, y_max)
+
+        logger.debug(
+            f"Synthesised constant roughness raster: z0={z0_value:.4f} m, "
+            f"extent x=[{x_min:.1f}, {x_max:.1f}] y=[{y_min:.1f}, {y_max:.1f}]"
+        )
+        return roughness_data, roughness_transform
