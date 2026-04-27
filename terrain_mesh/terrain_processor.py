@@ -87,7 +87,18 @@ class TerrainProcessor:
         # auto-detect from the DEM file's own geographic extent.
         center_lat = config.center_lat
         center_lon = config.center_lon
-        if center_lat is None or center_lon is None:
+
+        # For .dat files without explicit centre: derive UTM centre directly from
+        # the file's x/y extents (deltax/2, deltay/2) instead of going through
+        # lat/lon, since .dat files may use custom or local coordinate systems.
+        _dat_centre_utm = None
+        if (center_lat is None or center_lon is None) and Path(dem_path).suffix.lower() == '.dat':
+            _dat_centre_utm = self._read_dat_centre_utm(dem_path)
+            logger.debug(
+                f"Auto-detected UTM centre from DAT extents: "
+                f"x={_dat_centre_utm[0]:.1f}, y={_dat_centre_utm[1]:.1f}"
+            )
+        elif center_lat is None or center_lon is None:
             center_lat, center_lon = self._dem_centre_latlon(dem_path)
             logger.debug(f"Auto-detected centre from DEM: lat={center_lat:.6f}, lon={center_lon:.6f}")
 
@@ -95,6 +106,9 @@ class TerrainProcessor:
         if config.center_coordinates:
             # User provided UTM coordinates directly
             center_utm = config.center_coordinates
+        elif _dat_centre_utm is not None:
+            # DAT file without lat/lon: use UTM centre read from extents
+            center_utm = _dat_centre_utm
         else:
             # Load from metadata JSON if available
             metadata_path = Path(dem_path).with_suffix('.json')
@@ -114,7 +128,11 @@ class TerrainProcessor:
         
         # Store the UTM CRS derived from config coordinates so format adapters
         # (DAT, NetCDF) use the correct zone for the site rather than a hardcoded one.
-        self.utm_crs = self.get_utm_crs(center_lon, center_lat)
+        # Only possible when lat/lon are known; otherwise the fallback inside the
+        # format adapters (CRS.from_epsg(32610)) is used, which is harmless for
+        # purely local coordinate systems.
+        if center_lat is not None and center_lon is not None:
+            self.utm_crs = self.get_utm_crs(center_lon, center_lat)
         
         # Crop using master function
         elevation_data, transform, crs, pixel_res, crop_mask = self.crop_and_rotate_raster(
@@ -464,6 +482,22 @@ class TerrainProcessor:
                 resampling=Resampling.bilinear,
             )
         return memfile
+
+    def _read_dat_centre_utm(self, dat_path) -> Tuple[float, float]:
+        """Return the UTM centre of a DAT file derived from its x/y extents.
+
+        Reads the header and coordinate columns without loading the full
+        elevation array, then returns the midpoint of the bounding box.
+
+        Args:
+            dat_path: Path to the DAT file
+
+        Returns:
+            (centre_x, centre_y) in the file's native coordinate system
+        """
+        data = np.loadtxt(dat_path, skiprows=1, usecols=(0, 1))
+        x, y = data[:, 0], data[:, 1]
+        return x.min() / 2.0 + x.max() / 2.0, y.min() / 2.0 + y.max() / 2.0
 
     def _dem_centre_latlon(self, dem_path: str) -> Tuple[float, float]:
         """Read the geographic center of a GeoTIFF DEM from its own metadata.
