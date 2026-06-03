@@ -241,6 +241,7 @@ class TerrainMeshPipeline:
                 grid_config=grid_config,
                 mesh_config=mesh_config,
                 boundary_config=boundary_config,
+                boundary_elevations=boundary_elevations,
                 visualization_config=visualization_config,
                 elevation_data=elevation_data,
                 treated_elevation=treated_elevation,
