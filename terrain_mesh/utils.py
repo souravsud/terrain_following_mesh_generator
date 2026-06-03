@@ -225,7 +225,7 @@ def write_metadata(**kwargs):
                 "boundary_mode": kwargs['boundary_config'].boundary_mode,
                 "flat_boundary_thickness_fraction": kwargs['boundary_config'].flat_boundary_thickness_fraction,
                 "enabled_boundaries": kwargs['boundary_config'].enabled_boundaries,
-                "target_strategy": kwargs['boundary_config'].target_strategy,
+                "clamp_target": kwargs['boundary_config'].clamp_target,
             },
 
             "visualization": {

@@ -41,7 +41,6 @@ def _validate_grading(grading: List[Tuple[float, float, float]], name: str) -> N
 
 DEFAULT_AOI_FRACTION = 0.4
 DEFAULT_FLAT_BOUNDARY_THICKNESS = 0.1
-DEFAULT_PROGRESSION_RATE = 1.5
 DEFAULT_PLOT_DPI = 150
 
 
@@ -197,93 +196,54 @@ class VisualizationConfig:
 
 @dataclass
 class BoundaryConfig:
-    """Configuration for boundary treatment with smooth-step blending.
+    """Configuration for 3-zone smooth-step boundary treatment.
 
-    Three zones are applied outside the AOI:
+    Outside the AOI, terrain is divided into two zones per enabled face:
 
-    - AOI (Area of Interest): central region, original terrain fully preserved.
-    - Smooth-step transition: blend from 100 % real terrain at the AOI edge
-      toward the target elevation at the flat-zone boundary using a C¹-
-      continuous smooth-step kernel (w = 3t²−2t³).  No additional DEM
-      smoothing is applied; only the blend weight changes.
-    - Flat zone: thin strip at each enabled boundary face held at a constant
+    - Smooth-step transition: the terrain is blended from 100 % real at the
+      AOI edge toward a computed target elevation at the flat-zone boundary,
+      using the C¹-continuous kernel w = 3t²−2t³.  No additional DEM
+      smoothing is applied.
+    - Flat zone: a thin strip at each enabled boundary face set to a constant
       target elevation so ABL inlet/outlet profiles can be applied on flat
       ground.
 
+    The target elevation is always computed by fitting a robust (Theil-Sen)
+    line through the 1-D median profile of the transition zone and
+    extrapolating to the flat-zone boundary.  The ``clamp_target`` flag
+    controls whether this extrapolated value is capped at the median of
+    the actual flat-zone terrain — preventing the flat zone from being set
+    higher than the real terrain on upward-sloping domains.
+
     Attributes:
-        aoi_fraction: Fraction of domain size used as the AOI (0–1).
+        aoi_fraction: Fraction of domain size for the central AOI (0–1).
         boundary_mode: 'uniform' (radial, all sides) or 'directional'
-            (selected faces only, aligned with flow direction).
-        flat_boundary_thickness_fraction: Total fraction of domain width
-            occupied by the flat zone on each enabled face (0–1).
-            The inner half of this strip is used as the sampling region for
-            the 'boundary_strip' strategy; the outer half is the truly flat
-            zone set to the target elevation.
-        enabled_boundaries: Faces to treat.  For directional mode use
-            ['east', 'west'] (outlet / inlet in the flow-aligned frame).
-        target_strategy: How to compute the flat-zone target elevation.
-
-            'boundary_strip'          Percentile-filtered mean of the flat-zone
-                                      pixels (legacy behaviour).
-            'aoi_mean'                Mean elevation of the AOI region.
-            'transition_extrapolation' Fit a robust line (Theil-Sen) through
-                                      the transition zone collapsed to 1-D,
-                                      then extrapolate to the flat-zone
-                                      boundary.  Handles mountains, valleys,
-                                      and sloped domains correctly without
-                                      being sensitive to edge anomalies.
-            'clamped_extrapolation'   Same as above but clamped so the target
-                                      never exceeds the median of the actual
-                                      flat-zone terrain (prevents artificial
-                                      highs on upward-sloping domains).
-
-    Note:
-        The legacy pyramid-smoothing parameters (smoothing_method,
-        kernel_progression, base_kernel_size, max_kernel_size,
-        progression_rate, boundary_flatness_mode) are retained as no-op
-        fields so existing YAML configs continue to load without errors.
+            (selected faces only, flow-aligned).
+        flat_boundary_thickness_fraction: Fraction of domain width used as
+            the flat zone on each enabled face.  The inner half is sampled
+            for the clamp; the outer half is set to the target elevation.
+        enabled_boundaries: Faces to treat, e.g. ['east', 'west'].
+        clamp_target: If True, cap the extrapolated target at the median of
+            the real flat-zone terrain, ensuring the flat zone never sits
+            above the actual terrain on that face.  Recommended for diverse
+            global datasets.  Default True.
 
     Raises:
         ValueError: If aoi_fraction or flat_boundary_thickness_fraction is
             not strictly between 0 and 1.
-        ValueError: If target_strategy is not one of the recognised values.
     """
 
-    # Zone definition
     aoi_fraction: float = DEFAULT_AOI_FRACTION
-
-    # Treatment mode
-    boundary_mode: str = "uniform"  # 'uniform' or 'directional'
-
-    # Boundary zone parameters
+    boundary_mode: str = "uniform"
     flat_boundary_thickness_fraction: float = DEFAULT_FLAT_BOUNDARY_THICKNESS
     enabled_boundaries: List[str] = None
-
-    # Target-elevation strategy (the key new parameter)
-    target_strategy: str = "transition_extrapolation"
-    # Options: 'boundary_strip' | 'aoi_mean' | 'transition_extrapolation' | 'clamped_extrapolation'
-
-    # ── Legacy / no-op parameters kept for YAML backward-compatibility ────────
-    smoothing_method: str = "mean"
-    kernel_progression: str = "exponential"
-    base_kernel_size: Optional[int] = None
-    max_kernel_size: Optional[int] = None
-    progression_rate: float = DEFAULT_PROGRESSION_RATE
-    boundary_flatness_mode: str = "blend_target"
-    uniform_elevation: Optional[float] = None
-    flat_fraction: float = 0.05
-    flat_boundaries: List[str] = None
-    transition_smoothing_sigma: float = 3.0
-    transition_iterations: int = 10
-    # ─────────────────────────────────────────────────────────────────────────
+    clamp_target: bool = True
 
     def __post_init__(self):
         if self.enabled_boundaries is None:
             self.enabled_boundaries = (
                 ["east", "west"] if self.boundary_mode == "directional" else ["uniform"]
             )
-        if self.flat_boundaries is None:
-            self.flat_boundaries = ["north", "south", "east", "west"]
 
 
 def load_config(config_path: str) -> Dict[str, Any]:

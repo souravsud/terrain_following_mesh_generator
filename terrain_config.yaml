@@ -1,54 +1,50 @@
-# Terrain Mesh Configuration
 # ============================================================
-# center_lat / center_lon are optional.  If omitted, the centre
-# is automatically derived from the geographic extent of the DEM
-# file (GeoTIFF only).  Specify them explicitly to crop a
-# sub-region rather than the full DEM extent.
+# Askervein Hill — Terrain Mesh Configuration
+# Neutral stratification, met wind 210° (SW, 1983 experiment)
+# Domain: 4.5km x 4.5km, AOI: 2.25km at 10m resolution
+# Total cells: ~7.4M
 # ============================================================
 
 terrain:
-  # Optional: explicit site centre (Perdigão, Portugal).
-  # Remove or comment out these two lines to auto-detect from the DEM.
-  center_lat: 39.71121111
-  center_lon: -7.73483333
-  crop_size_km: 30
-  rotation_deg: 0
+  crop_size_km: 4.5
+  rotation_deg: 210
   smoothing_sigma: 0
   roughness_smoothing_sigma: 0
   center_coordinates: false
-  
+
 grid:
-  nx: 395
-  ny: 395
+  nx: 296
+  ny: 296
   x_grading:
-    - [0.35,0.12,0.05]
+    - [0.35, 0.12, 0.05]
     - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0] 
+    - [0.35, 0.12, 20.0]
   y_grading:
-    - [0.35,0.12,0.05]
+    - [0.35, 0.12, 0.05]
     - [0.30, 0.76, 1.0]
-    - [0.35, 0.12, 20.0] 
-    
+    - [0.35, 0.12, 20.0]
+
 mesh:
   domain_height: 3000.0
-  total_z_cells: 91
+  total_z_cells: 85
   terrain_normal_first_layer: true
   adjust_ceiling_for_terrain: true
   z_grading:
-    - [1.0, 1.0, 62.4]
-
+    - [1.0, 1.0, 150.0]
+  patch_types:
+    ground: wall
+    sky: patch
+    inlet: patch
+    outlet: patch
+    sides: patch
 
 boundary:
-  aoi_fraction: 0.3
+  aoi_fraction: 0.50
   boundary_mode: directional
   flat_boundary_thickness_fraction: 0.08
-  enabled_boundaries: [east, west]
-  smoothing_method: mean
-  kernel_progression: exponential
-  base_kernel_size: 4
-  progression_rate: 36
-  boundary_flatness_mode: blend_target
-  
+  enabled_boundaries: [west, east]
+  clamp_target: true
+
 visualization:
   create_plots: true
   show_grid_lines: true
