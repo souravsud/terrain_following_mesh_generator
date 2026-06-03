@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "terrain-mesh"
-version = "1.0.0"
+version = "1.1.0"
 description = "Structured terrain-following mesh generator for OpenFOAM atmospheric simulations"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -48,7 +48,7 @@ from .config import (
 )
 from .pipeline import TerrainMeshPipeline
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = [
     "TerrainMeshPipeline",
     "TerrainConfig",
