@@ -39,7 +39,7 @@ terrain_mesh_output/
 *.dat
 downloads/
 output/
-
+out/
 # Temporary files
 /tmp/
 *.tmp
