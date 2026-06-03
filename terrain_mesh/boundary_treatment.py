@@ -148,17 +148,12 @@ class BoundaryTreatment:
             all_flat |= f_flat
             all_smooth |= f_smooth
 
-        # Pixels inside the crop but outside AOI and any enabled-face zone
-        # (e.g. the "corner" regions when only east/west are enabled) get a
-        # gentle blend toward the mean of the computed targets so no raw
-        # terrain edge appears at the side boundaries.
-        corner_mask = crop_mask & ~aoi_mask & ~all_flat & ~all_smooth
-        if np.any(corner_mask) and targets:
-            corner_target = float(np.mean(list(targets.values())))
-            result = self._blend_corners(
-                result, elevation, corner_mask, flow_x, flow_y,
-                aoi_half, cx, cy, corner_target, config
-            )
+        # Corner pixels (inside crop, outside AOI, not in any enabled-face zone)
+        # are left as original terrain. They correspond to the side boundaries
+        # (north/south in the flow frame) which don't require flat treatment.
+        # No blending is applied — there is no discontinuity because the
+        # smooth-step zones adjacent to the corners have t=0 (w=0) at their
+        # AOI edge, so they also equal original terrain at the junction.
 
         zones = {
             "aoi": aoi_mask,
@@ -288,35 +283,6 @@ class BoundaryTreatment:
         t = np.clip(t, 0.0, 1.0)
         w = _smooth_step(t)
         result[mask] = real_terrain[mask] * (1.0 - w) + target * w
-        return result
-
-    @staticmethod
-    def _blend_corners(
-        result: np.ndarray,
-        real_terrain: np.ndarray,
-        corner_mask: np.ndarray,
-        flow_x: np.ndarray,
-        flow_y: np.ndarray,
-        aoi_half: float,
-        cx: float,
-        cy: float,
-        target: float,
-        config: BoundaryConfig,
-    ) -> np.ndarray:
-        """Blend corner pixels (outside AOI, not in any face zone) toward target.
-
-        Uses the Chebyshev distance from the AOI boundary square to define the
-        blend weight, so the corner behaviour is consistent with the face zones.
-        """
-        dist_from_aoi = np.maximum(
-            np.abs(flow_x[corner_mask] - cx) - aoi_half,
-            np.abs(flow_y[corner_mask] - cy) - aoi_half,
-        )
-        if dist_from_aoi.max() < 1e-6:
-            return result
-        t = np.clip(dist_from_aoi / dist_from_aoi.max(), 0.0, 1.0)
-        w = _smooth_step(t)
-        result[corner_mask] = real_terrain[corner_mask] * (1.0 - w) + target * w
         return result
 
     # ──────────────────────────────────────────────────────────────────────────
