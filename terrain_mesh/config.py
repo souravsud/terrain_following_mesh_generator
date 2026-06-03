@@ -197,30 +197,56 @@ class VisualizationConfig:
 
 @dataclass
 class BoundaryConfig:
-    """Configuration for boundary treatment with progressive smoothing.
-    
-    This configuration controls the 4-zone boundary treatment:
-    - Area of Interest (AOI): Central region with original terrain
-    - Transition Zone: Progressive smoothing from AOI to boundary
-    - Blend Zone: Smooth blending to target elevation
-    - Flat Zone: Constant elevation at boundary
-    
+    """Configuration for boundary treatment with smooth-step blending.
+
+    Three zones are applied outside the AOI:
+
+    - AOI (Area of Interest): central region, original terrain fully preserved.
+    - Smooth-step transition: blend from 100 % real terrain at the AOI edge
+      toward the target elevation at the flat-zone boundary using a C¹-
+      continuous smooth-step kernel (w = 3t²−2t³).  No additional DEM
+      smoothing is applied; only the blend weight changes.
+    - Flat zone: thin strip at each enabled boundary face held at a constant
+      target elevation so ABL inlet/outlet profiles can be applied on flat
+      ground.
+
     Attributes:
-        aoi_fraction: Fraction of domain considered as AOI (0-1)
-        boundary_mode: Treatment mode - 'uniform' (all sides) or 'directional' (selected sides)
-        flat_boundary_thickness_fraction: Thickness of flat boundary region (0-1)
-        enabled_boundaries: List of boundaries to treat: ['east', 'west', 'north', 'south']
-        smoothing_method: Smoothing kernel type - 'mean', 'gaussian', or 'median'
-        kernel_progression: How smoothing increases - 'exponential' or 'linear'
-        base_kernel_size: Initial smoothing kernel size (auto-calculated if None)
-        max_kernel_size: Maximum smoothing kernel size (auto-calculated if None)
-        progression_rate: Rate of kernel size increase (for exponential progression)
-        boundary_flatness_mode: Flattening method - 'heavy_smooth' or 'blend_target'
-        uniform_elevation: Override boundary height in meters (auto-calculated if None)
-        
+        aoi_fraction: Fraction of domain size used as the AOI (0–1).
+        boundary_mode: 'uniform' (radial, all sides) or 'directional'
+            (selected faces only, aligned with flow direction).
+        flat_boundary_thickness_fraction: Total fraction of domain width
+            occupied by the flat zone on each enabled face (0–1).
+            The inner half of this strip is used as the sampling region for
+            the 'boundary_strip' strategy; the outer half is the truly flat
+            zone set to the target elevation.
+        enabled_boundaries: Faces to treat.  For directional mode use
+            ['east', 'west'] (outlet / inlet in the flow-aligned frame).
+        target_strategy: How to compute the flat-zone target elevation.
+
+            'boundary_strip'          Percentile-filtered mean of the flat-zone
+                                      pixels (legacy behaviour).
+            'aoi_mean'                Mean elevation of the AOI region.
+            'transition_extrapolation' Fit a robust line (Theil-Sen) through
+                                      the transition zone collapsed to 1-D,
+                                      then extrapolate to the flat-zone
+                                      boundary.  Handles mountains, valleys,
+                                      and sloped domains correctly without
+                                      being sensitive to edge anomalies.
+            'clamped_extrapolation'   Same as above but clamped so the target
+                                      never exceeds the median of the actual
+                                      flat-zone terrain (prevents artificial
+                                      highs on upward-sloping domains).
+
+    Note:
+        The legacy pyramid-smoothing parameters (smoothing_method,
+        kernel_progression, base_kernel_size, max_kernel_size,
+        progression_rate, boundary_flatness_mode) are retained as no-op
+        fields so existing YAML configs continue to load without errors.
+
     Raises:
-        ValueError: If aoi_fraction or flat_boundary_thickness_fraction is not in (0, 1)
-        ValueError: If progression_rate is not > 1
+        ValueError: If aoi_fraction or flat_boundary_thickness_fraction is
+            not strictly between 0 and 1.
+        ValueError: If target_strategy is not one of the recognised values.
     """
 
     # Zone definition
@@ -229,35 +255,33 @@ class BoundaryConfig:
     # Treatment mode
     boundary_mode: str = "uniform"  # 'uniform' or 'directional'
 
-    # Boundary sampling parameters
+    # Boundary zone parameters
     flat_boundary_thickness_fraction: float = DEFAULT_FLAT_BOUNDARY_THICKNESS
-    enabled_boundaries: List[str] = None  # For directional mode ['east', 'west']
+    enabled_boundaries: List[str] = None
 
-    # Progressive smoothing parameters
-    smoothing_method: str = "mean"  # 'gaussian', 'mean', 'median'
-    kernel_progression: str = "exponential"  # 'exponential', 'linear'
-    base_kernel_size: int = None
-    max_kernel_size: int = None
-    progression_rate: float = DEFAULT_PROGRESSION_RATE  # For exponential progression
+    # Target-elevation strategy (the key new parameter)
+    target_strategy: str = "transition_extrapolation"
+    # Options: 'boundary_strip' | 'aoi_mean' | 'transition_extrapolation' | 'clamped_extrapolation'
 
-    # Boundary flatness treatment
-    boundary_flatness_mode: str = "heavy_smooth"  # 'heavy_smooth', 'blend_target'
-    uniform_elevation: Optional[float] = None  # Override calculated boundary height
-
-    # Legacy parameters (for backward compatibility if needed)
-    flat_fraction: float = 0.05  # Not used in progressive smoothing
-    flat_boundaries: List[str] = None  # Not used in progressive smoothing
-    transition_smoothing_sigma: float = 3.0  # Not used in progressive smoothing
-    transition_iterations: int = 10  # Not used in progressive smoothing
+    # ── Legacy / no-op parameters kept for YAML backward-compatibility ────────
+    smoothing_method: str = "mean"
+    kernel_progression: str = "exponential"
+    base_kernel_size: Optional[int] = None
+    max_kernel_size: Optional[int] = None
+    progression_rate: float = DEFAULT_PROGRESSION_RATE
+    boundary_flatness_mode: str = "blend_target"
+    uniform_elevation: Optional[float] = None
+    flat_fraction: float = 0.05
+    flat_boundaries: List[str] = None
+    transition_smoothing_sigma: float = 3.0
+    transition_iterations: int = 10
+    # ─────────────────────────────────────────────────────────────────────────
 
     def __post_init__(self):
         if self.enabled_boundaries is None:
-            if self.boundary_mode == "directional":
-                self.enabled_boundaries = ["east", "west"]
-            else:
-                self.enabled_boundaries = ["uniform"]
-
-        # Legacy compatibility
+            self.enabled_boundaries = (
+                ["east", "west"] if self.boundary_mode == "directional" else ["uniform"]
+            )
         if self.flat_boundaries is None:
             self.flat_boundaries = ["north", "south", "east", "west"]
 

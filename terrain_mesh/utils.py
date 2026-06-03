@@ -225,13 +225,7 @@ def write_metadata(**kwargs):
                 "boundary_mode": kwargs['boundary_config'].boundary_mode,
                 "flat_boundary_thickness_fraction": kwargs['boundary_config'].flat_boundary_thickness_fraction,
                 "enabled_boundaries": kwargs['boundary_config'].enabled_boundaries,
-                "smoothing_method": kwargs['boundary_config'].smoothing_method,
-                "kernel_progression": kwargs['boundary_config'].kernel_progression,
-                "base_kernel_size": kwargs['boundary_config'].base_kernel_size,
-                "max_kernel_size": kwargs['boundary_config'].max_kernel_size,
-                "progression_rate": kwargs['boundary_config'].progression_rate,
-                "boundary_flatness_mode": kwargs['boundary_config'].boundary_flatness_mode,
-                "uniform_elevation": kwargs['boundary_config'].uniform_elevation,
+                "target_strategy": kwargs['boundary_config'].target_strategy,
             },
 
             "visualization": {
